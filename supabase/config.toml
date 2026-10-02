@@ -1,0 +1,6 @@
+project_id = "control-room"
+[auth]
+enabled = true
+enable_anonymous_sign_ins = true
+[auth.rate_limit]
+anonymous_users = 30
