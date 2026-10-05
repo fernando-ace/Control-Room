@@ -33,10 +33,15 @@ test("three independent sessions complete Solar Storm, reconnect, fail, and retr
     }
     page.on("response", async (r) => {
       if (r.url().endsWith("/api/room") && r.ok()) {
-        const s = (await r.json()) as Snapshot;
-        if (s.mission && s.mission.startAt === s.serverNow)
-          startSnapshots.set(s.mission.startAt, s);
-        last.set(page, s);
+        try {
+          const s = (await r.json()) as Snapshot;
+          if (s.mission && s.mission.startAt === s.serverNow)
+            startSnapshots.set(s.mission.startAt, s);
+          last.set(page, s);
+        } catch {
+          // A response can be detached when Playwright closes a context after an assertion.
+          // Keep the original test failure visible; required snapshots are asserted below.
+        }
       }
     });
     await page.goto("/");
@@ -83,6 +88,13 @@ test("three independent sessions complete Solar Storm, reconnect, fail, and retr
   await expect(c.locator(".briefing h1")).toHaveText("Commander");
   await expect(p.locator(".briefing h1")).toHaveText("Pilot");
   await expect(e.locator(".briefing h1")).toHaveText("Engineer");
+  for (const page of crewPages) {
+    await expect(page.getByText(/Everyone has different information and controls/)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Your Job" })).toBeVisible();
+  }
+  await expect(c.locator(".briefing")).toContainText("crew’s eyes");
+  await expect(p.locator(".briefing")).toContainText("course and launch control");
+  await expect(e.locator(".briefing")).toContainText("powered and cool");
   await pages[3].getByLabel("YOUR NAME").fill("Fourth QA");
   await pages[3].getByLabel("ROOM CODE").fill(code);
   await pages[3].getByRole("button", { name: "Join room", exact: true }).click();
@@ -231,8 +243,25 @@ test("three independent sessions complete Solar Storm, reconnect, fail, and retr
     await expect(
       p.getByRole("heading", { name: "Navigation", exact: true }),
     ).toBeVisible();
+    for (const page of crewPages) {
+      await expect(page.locator(".mission-brief")).toBeVisible();
+      await expect(page.locator(".mission-brief")).toContainText("YOUR JOB");
+      await expect(page.locator(".objective-list")).toContainText("ACTIVE");
+      await expect(page.getByText("NEEDS CREW")).toBeVisible();
+      await page.locator(".how-to summary").click();
+      await expect(page.locator(".how-to")).toContainText("Shield sectors");
+    }
   };
   await ready();
+  await Promise.all(crewPages.map((page, index) =>
+    page.screenshot({
+      path: `test-results/onboarding-${["commander", "pilot", "engineer"][index]}.png`,
+      fullPage: true,
+    }),
+  ));
+  await e.setViewportSize({ width: 390, height: 844 });
+  await e.screenshot({ path: "test-results/onboarding-engineer-mobile.png", fullPage: true });
+  await e.setViewportSize({ width: 1280, height: 800 });
   const start = last.get(c)!.mission!.startAt;
   await expect.poll(() => startSnapshots.has(start)).toBe(true);
   expect(startSnapshots.get(start)!.mission!.serverNow).toBe(start);
@@ -290,7 +319,7 @@ test("three independent sessions complete Solar Storm, reconnect, fail, and retr
   expect(last.get(c)!.mission!.hull).toBeGreaterThan(95);
   const waitUntil = async (seconds: number) => {
     await expect
-      .poll(() => Date.now(), { timeout: 160000, intervals: [1000] })
+      .poll(() => last.get(c)?.mission?.serverNow, { timeout: 160000, intervals: [1000] })
       .toBeGreaterThanOrEqual(start + seconds * 1000);
   };
   await waitUntil(51);
@@ -309,7 +338,13 @@ test("three independent sessions complete Solar Storm, reconnect, fail, and retr
       exact: true,
     })
     .click();
+  await expect
+    .poll(() => last.get(e)?.station.isolated, { timeout: 12000 })
+    .toBe(wrongCircuit);
   await e.getByRole("button", { name: "Vent coolant", exact: true }).click();
+  await expect
+    .poll(() => last.get(e)?.station.vented, { timeout: 12000 })
+    .toBe(true);
   const wrongReset = await postAction(e, "live-wrong-reset-qa", {
     type: "reset",
   });
@@ -333,9 +368,7 @@ test("three independent sessions complete Solar Storm, reconnect, fail, and retr
   });
   expect(cooldownReset.status).toBe(400);
   expect(cooldownReset.body.error).toContain("Reset cooling down");
-  await expect
-    .poll(() => Date.now(), { timeout: 160000, intervals: [1000] })
-    .toBeGreaterThanOrEqual(start + 55 * 1000);
+  await waitUntil(55);
   await e
     .getByRole("button", { name: `${circuit} ${symbol}`, exact: true })
     .click();

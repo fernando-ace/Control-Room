@@ -325,6 +325,38 @@ header {
   grid-template-columns: 1.35fr 1fr;
   gap: 18px;
 }
+.mission-brief {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(250px, .8fr);
+  gap: 12px 24px;
+  align-items: center;
+  margin-bottom: 18px;
+  border-color: #bd8e3f;
+  background: linear-gradient(110deg, #241c0b, #101b22 78%);
+}
+.mission-brief-main label { color: var(--amber); }
+.mission-brief-main h1 { font-size: clamp(24px, 3vw, 34px); margin: 8px 0; color: #ffe0a2; }
+.mission-brief-main > p { color: var(--text); font-size: 16px; margin: 8px 0 0; line-height: 1.45; }
+.mission-brief-main .action-feedback { color: #80e8c4; font-size: 13px; }
+.mission-brief-main .hull-warning { color: #ffb36b; font-weight: 700; }
+.objective-list { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.objective-list > span { display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; align-items: center; color: var(--muted); font-size: 13px; }
+.objective-list b { grid-row: span 2; font-size: 18px; }
+.objective-list small { font-size: 9px; }
+.objective-list .objective-done { color: #43dcb4; }
+.objective-list .objective-active { color: var(--amber); }
+.objective-list .objective-waiting { opacity: .68; }
+.dependencies { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 7px 18px; padding-top: 10px; border-top: 1px solid #604e2d; }
+.dependencies b { color: var(--amber); font: 11px "Courier New", monospace; letter-spacing: .1em; }
+.dependencies span { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
+.dependencies i { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); }
+.dependencies i.dep-ready { background: #43dcb4; }
+.how-to { grid-column: 1 / -1; color: var(--muted); font-size: 13px; }
+.how-to summary { width: fit-content; cursor: pointer; color: var(--cyan); padding: 5px 0; }
+.how-to p { margin: 8px 0; font-size: 13px; }
+.how-to b { color: var(--text); }
+.attention { box-shadow: 0 0 0 1px #ffc15c66, 0 0 22px #ffc15c12; animation: control-pulse 2s ease-in-out 3; }
+@keyframes control-pulse { 50% { border-color: var(--amber); } }
 .controls,
 aside {
   display: flex;
@@ -883,6 +915,11 @@ aside {
   .panel {
     padding: 20px;
   }
+  .mission-brief { grid-template-columns: 1fr; padding: 18px; gap: 14px; }
+  .mission-brief-main > p { font-size: 14px; }
+  .objective-list { grid-template-columns: 1fr 1fr; }
+  .dependencies { gap: 8px 12px; }
+  .dependencies span { font-size: 11px; }
   h2 {
     font-size: 15px;
   }
