@@ -344,6 +344,7 @@ header {
 .objective-list b { grid-row: span 2; font-size: 18px; }
 .objective-list small { font-size: 9px; }
 .objective-list .objective-done { color: #43dcb4; }
+.objective-list .objective-failed { color: #ff7d72; font-weight: 700; }
 .objective-list .objective-active { color: var(--amber); }
 .objective-list .objective-waiting { opacity: .68; }
 .dependencies { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 7px 18px; padding-top: 10px; border-top: 1px solid #604e2d; }
@@ -409,46 +410,6 @@ aside {
 }
 .circuits .selected strong {
   color: #06202c;
-}
-.mission-alert {
-  border: 1px solid var(--amber);
-  border-radius: 4px;
-  background: linear-gradient(115deg, #241c0b, #11170f);
-  padding: 26px;
-}
-.mission-alert > div:first-child {
-  display: flex;
-  align-items: center;
-  gap: 22px;
-  color: var(--amber);
-}
-.mission-alert label {
-  color: var(--amber);
-  font-size: 13px;
-}
-.mission-alert h1 {
-  text-transform: uppercase;
-  color: var(--amber);
-  font-size: 32px;
-  margin: 18px 0;
-}
-.mission-alert p {
-  color: #e8e2d0;
-  font-size: 18px;
-}
-.objectives {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-top: 22px;
-}
-.objectives span {
-  display: flex;
-  gap: 10px;
-  color: #849594;
-}
-.objectives span.done {
-  color: #43dcb4;
 }
 .vessel {
   flex: 1;
@@ -923,26 +884,11 @@ aside {
   h2 {
     font-size: 15px;
   }
-  .mission-alert {
-    padding: 22px;
-  }
-  .mission-alert h1 {
-    font-size: 26px;
-  }
-  .mission-alert p {
-    font-size: 16px;
-  }
   .station-layout aside {
     order: -1;
   }
   .vessel {
     display: none;
-  }
-  .objectives {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 12px;
-    font-size: 10px;
   }
   .crew {
     flex-wrap: wrap;

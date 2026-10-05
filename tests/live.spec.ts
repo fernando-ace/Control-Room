@@ -207,6 +207,36 @@ test("three independent sessions complete Solar Storm, reconnect, fail, and retr
       });
       return { status: response.status, body: await response.json() };
     }, { actionId, action, extras });
+  const postActions = (
+    page: Page,
+    actions: Array<{ type: string; value?: string | number | boolean }>,
+  ): Promise<ApiResult[]> =>
+    page.evaluate(async (sequence) => {
+      const key = Object.keys(localStorage).find(
+        (candidate) =>
+          candidate.startsWith("sb-") && candidate.endsWith("-auth-token"),
+      );
+      if (!key) throw new Error("Anonymous session storage was not found");
+      const accessToken = JSON.parse(localStorage.getItem(key)!).access_token;
+      const results: ApiResult[] = [];
+      for (const action of sequence) {
+        const response = await fetch("/api/room", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            op: "action",
+            code: localStorage.getItem("cr-room"),
+            actionId: crypto.randomUUID(),
+            action,
+          }),
+        });
+        results.push({ status: response.status, body: await response.json() });
+      }
+      return results;
+    }, actions);
 
   // Exercise host swapping, then restore the original stations.
   await c
@@ -250,9 +280,17 @@ test("three independent sessions complete Solar Storm, reconnect, fail, and retr
       await expect(page.getByText("NEEDS CREW")).toBeVisible();
       await page.locator(".how-to summary").click();
       await expect(page.locator(".how-to")).toContainText("Shield sectors");
+      await page.locator(".how-to summary").click();
     }
   };
   await ready();
+  for (const page of crewPages) {
+    const width = await page.evaluate(() => ({
+      viewport: document.documentElement.clientWidth,
+      content: document.documentElement.scrollWidth,
+    }));
+    expect(width.content).toBeLessThanOrEqual(width.viewport);
+  }
   await Promise.all(crewPages.map((page, index) =>
     page.screenshot({
       path: `test-results/onboarding-${["commander", "pilot", "engineer"][index]}.png`,
@@ -260,6 +298,11 @@ test("three independent sessions complete Solar Storm, reconnect, fail, and retr
     }),
   ));
   await e.setViewportSize({ width: 390, height: 844 });
+  const mobileWidth = await e.evaluate(() => ({
+    viewport: document.documentElement.clientWidth,
+    content: document.documentElement.scrollWidth,
+  }));
+  expect(mobileWidth.content).toBeLessThanOrEqual(mobileWidth.viewport);
   await e.screenshot({ path: "test-results/onboarding-engineer-mobile.png", fullPage: true });
   await e.setViewportSize({ width: 1280, height: 800 });
   const start = last.get(c)!.mission!.startAt;
@@ -351,6 +394,15 @@ test("three independent sessions complete Solar Storm, reconnect, fail, and retr
   expect(wrongReset.status).toBe(200);
   const hullAfterWrongReset = (wrongReset.body as Snapshot).mission!.hull;
   expect(hullAfterWrongReset).toBeCloseTo(hullBeforeWrongReset - 10, 0);
+  const [cooldownIsolate, cooldownVent, cooldownReset] = await postActions(e, [
+    { type: "isolate", value: wrongCircuit },
+    { type: "vent" },
+    { type: "reset" },
+  ]);
+  expect(cooldownIsolate.status).toBe(200);
+  expect(cooldownVent.status).toBe(200);
+  expect(cooldownReset.status).toBe(400);
+  expect(cooldownReset.body.error).toContain("Reset cooling down");
   const duplicateReset = await postAction(e, "live-wrong-reset-qa", {
     type: "reset",
   });
@@ -358,21 +410,17 @@ test("three independent sessions complete Solar Storm, reconnect, fail, and retr
   expect((duplicateReset.body as Snapshot).mission!.hull).toBe(
     hullAfterWrongReset,
   );
-  await postAction(e, "live-cooldown-isolate", {
-    type: "isolate",
-    value: wrongCircuit,
-  });
-  await postAction(e, "live-cooldown-vent", { type: "vent" });
-  const cooldownReset = await postAction(e, "live-cooldown-reset-qa", {
-    type: "reset",
-  });
-  expect(cooldownReset.status).toBe(400);
-  expect(cooldownReset.body.error).toContain("Reset cooling down");
   await waitUntil(55);
   await e
     .getByRole("button", { name: `${circuit} ${symbol}`, exact: true })
     .click();
+  await expect
+    .poll(() => last.get(e)?.station.isolated, { timeout: 12000 })
+    .toBe(circuit);
   await e.getByRole("button", { name: "Vent coolant", exact: true }).click();
+  await expect
+    .poll(() => last.get(e)?.station.vented, { timeout: 12000 })
+    .toBe(true);
   await e.getByRole("button", { name: "Reset circuit", exact: true }).click();
   await expect
     .poll(() => typeof last.get(c)?.mission?.repairedAt)

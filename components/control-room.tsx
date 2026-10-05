@@ -37,13 +37,6 @@ const phases = [
   "Second storm wave",
   "Escape window",
 ];
-const phaseHints = [
-  "Confirm your stations. The first storm arrives in 12 seconds.",
-  "Coordinate the shield sector, shield power, and heading. Hold together for five seconds.",
-  "Ask Commander for the damaged circuit symbol. Isolate, vent, then reset.",
-  "A new storm direction. Coordinate shielding and heading for an eight-second hold.",
-  "Complete both storm holds and coolant repair. Set engines, align, enter code, authorize, then escape.",
-];
 export default function ControlRoom() {
   const [room, setRoom] = useState<Snapshot | null>(null),
     [name, setName] = useState(""),
@@ -217,6 +210,10 @@ export default function ControlRoom() {
         setActionFeedback(`Hull −${Math.round(beforeHull - updated.mission.hull)}% · the team took damage. Recheck the called heading, shield, and power.`);
       } else {
         const feedback: Record<string, string> = {
+          ready: action.value ? "Station ready · waiting for the crew." : "Station unready · review your briefing before launch.",
+          start: "Mission launched · first storm in 12 seconds. Check your objective and call out what you need.",
+          retry: "Back in the lobby · confirm your station before the next launch.",
+          swap: "Station assignment updated · review your role briefing.",
           shield: "Shield sector set · Engineer, route power to shields. Pilot, align to the called heading.",
           power: action.value === "Engines" ? "Engine power routed · Pilot, the engines are ready for departure." : "Power routed · crew, confirm your station is aligned for the current task.",
           heading: "Heading command set · alignment takes time. Tell the crew when you are aligned.",
@@ -227,7 +224,7 @@ export default function ControlRoom() {
           code: "Code submitted · Pilot, initiate escape when all prerequisites are ready.",
           escape: "Escape initiated · bring the crew home!",
         };
-        setActionFeedback(feedback[action.type] ?? "Action received.");
+        setActionFeedback(feedback[action.type] ?? "Action sent to mission control.");
       }
       window.setTimeout(() => setActionFeedback(""), 5000);
     } catch (e) {
@@ -263,6 +260,13 @@ export default function ControlRoom() {
   const connected =
     room?.players.filter((p) => clock - p.seenAt < 15000).length ?? 0;
   const st = room?.station ?? {};
+  const escapeBlockers = m?.phase === 4
+    ? [
+        !m.completedAt[0] ? "first storm hold" : "",
+        !m.repairedAt ? "coolant repair" : "",
+        !m.completedAt[1] ? "second storm hold" : "",
+      ].filter(Boolean)
+    : [];
   return (
     <main className="shell">
       <header>
@@ -553,23 +557,23 @@ export default function ControlRoom() {
               <div className="mission-brief-main">
                 <label>YOUR JOB · {role}</label>
                 <h1>{m.phase === 4 ? "Prepare to escape" : phases[m.phase]}</h1>
-                <p>{role === "Commander" ? (m.phase === 4 ? "Read the escape heading and code to Pilot, then authorize departure." : `Call out ${st.headings?.[m.phase >= 2 ? 1 : 0]}° and ${st.sectors?.[m.phase >= 2 ? 1 : 0]} shield. Set the shield sector.`) : role === "Pilot" ? (m.phase === 4 ? "Ask Commander for the escape heading and code. Align, enter the code, and initiate escape when ready." : "Ask Commander for the safe heading, set it, and tell the crew when aligned.") : (m.phase === 4 ? "Switch power to Engines. Tell Pilot when engine power is ready." : m.phase >= 2 && !m.repairedAt && (m.phase > 2 || clock >= m.startAt + 80000) ? `Repair coolant: isolate the circuit Commander calls (${st.brokenSymbol}), vent, then reset.` : m.phase === 2 ? "Keep power Balanced. Coolant failure begins at 1:20—ask Commander for the damaged circuit symbol." : "Route power to Shield. Keep the crew informed when power is set.")}</p>
+                <p>{role === "Commander" ? (m.phase === 4 ? escapeBlockers.length ? `Escape is blocked: ${escapeBlockers.join(", ")} ${escapeBlockers.length === 1 ? "was" : "were"} missed. Tell the crew what failed.` : "Read the escape heading and code to Pilot, then authorize departure." : `Call out ${st.headings?.[m.phase >= 2 ? 1 : 0]}° and ${st.sectors?.[m.phase >= 2 ? 1 : 0]} shield. Set the shield sector.`) : role === "Pilot" ? (m.phase === 4 ? escapeBlockers.length ? `Escape is blocked: ${escapeBlockers.join(", ")} ${escapeBlockers.length === 1 ? "was" : "were"} missed. Tell Commander.` : "Ask Commander for the escape heading and code. Align, enter the code, and initiate escape when ready." : "Ask Commander for the safe heading, set it, and tell the crew when aligned.") : (m.phase === 4 ? escapeBlockers.length ? `Escape is blocked: ${escapeBlockers.join(", ")} ${escapeBlockers.length === 1 ? "was" : "were"} missed. Tell the crew.` : "Switch power to Engines. Tell Pilot when engine power is ready." : m.phase >= 2 && !m.repairedAt && (m.phase > 2 || clock >= m.startAt + 80000) ? `Repair coolant: isolate the circuit Commander calls (${st.brokenSymbol}), vent, then reset.` : m.phase === 2 ? "Keep power Balanced. Coolant failure begins at 1:20—ask Commander for the damaged circuit symbol." : "Route power to Shield. Keep the crew informed when power is set.")}</p>
                 {m.hull <= 40 && <p className="hull-warning">WARNING · Hull at {Math.round(m.hull)}%. Correct the active storm setup now.</p>}
                 {actionFeedback && <p className="action-feedback" role="status">{actionFeedback}</p>}
               </div>
               <div className="objective-list" aria-label="Mission objectives">
                 {[
-                  { text: "First storm hold", done: Boolean(m.completedAt[0]), active: m.phase <= 1 },
-                  { text: "Coolant restored", done: Boolean(m.repairedAt), active: m.phase >= 2 && !m.repairedAt && (m.phase > 2 || clock >= m.startAt + 80000) },
-                  { text: "Second storm hold", done: Boolean(m.completedAt[1]), active: m.phase === 3 },
-                  { text: "Escape", done: false, active: m.phase === 4 },
-                ].map((o) => <span key={o.text} className={o.done ? "objective-done" : o.active ? "objective-active" : "objective-waiting"}><b>{o.done ? "✓" : o.active ? "●" : "○"}</b>{o.text}<small>{o.done ? "COMPLETED" : o.active ? "ACTIVE" : "WAITING"}</small></span>)}
+                  { text: "First storm hold", done: Boolean(m.completedAt[0]), failed: m.phase === 4 && !m.completedAt[0], active: m.phase <= 1 },
+                  { text: "Coolant restored", done: Boolean(m.repairedAt), failed: m.phase === 4 && !m.repairedAt, active: m.phase >= 2 && !m.repairedAt && (m.phase > 2 || clock >= m.startAt + 80000) },
+                  { text: "Second storm hold", done: Boolean(m.completedAt[1]), failed: m.phase === 4 && !m.completedAt[1], active: m.phase === 3 },
+                  { text: "Escape", done: m.result === "victory", failed: m.result === "defeat", active: m.phase === 4 && !m.result },
+                ].map((o) => <span key={o.text} className={o.done ? "objective-done" : o.failed ? "objective-failed" : o.active ? "objective-active" : "objective-waiting"}><b>{o.done ? "✓" : o.failed ? "×" : o.active ? "●" : "○"}</b>{o.text}<small>{o.done ? "COMPLETED" : o.failed ? "FAILED" : o.active ? "ACTIVE" : "WAITING"}</small></span>)}
               </div>
               <div className="dependencies">
-                <b>NEEDS CREW</b>
-                {(m.phase < 2 || m.phase === 3) && <span><i className={role === "Engineer" && st.power === "Shield" ? "dep-ready" : ""} /> {role === "Engineer" ? `You · Shield power ${st.power === "Shield" ? "ready" : "needed"}` : "Engineer · route Shield power"}</span>}
-                {(m.phase < 2 || m.phase === 3) && <span><i /> {role === "Pilot" ? `You · compare current heading ${Math.round(st.heading ?? 0)}° with Commander’s call` : `Pilot · align to ${role === "Commander" ? "the safe heading above" : "the heading Commander calls"}`}</span>}
-                {m.phase === 2 && !m.repairedAt && clock >= m.startAt + 80000 && <span><i /> Engineer · isolate, vent, and reset the called circuit</span>}
+                <b>{m.phase === 2 ? "UP NEXT · SECOND WAVE" : "NEEDS CREW"}</b>
+                {(m.phase < 2 || m.phase === 2 || m.phase === 3) && <span><i className={role === "Engineer" && st.power === "Shield" ? "dep-ready" : ""} /> {role === "Engineer" ? `You · Shield power ${st.power === "Shield" ? "ready" : m.phase === 2 ? "needed by 1:30" : "needed"}` : `Engineer · route Shield power${m.phase === 2 ? " by 1:30" : ""}`}</span>}
+                {(m.phase < 2 || m.phase === 2 || m.phase === 3) && <span><i /> {role === "Pilot" ? `You · compare current heading ${Math.round(st.heading ?? 0)}° with Commander’s call` : `Pilot · align to ${role === "Commander" ? "the safe heading above" : "the heading Commander calls"}`}</span>}
+                {m.phase === 2 && !m.repairedAt && <span><i /> Engineer · repair coolant by 1:30</span>}
                 {m.phase === 4 && <><span><i className={role === "Engineer" && st.power === "Engines" ? "dep-ready" : ""} /> {role === "Engineer" ? `You · engine power ${st.power === "Engines" ? "ready" : "needed"}` : "Engineer · switch power to Engines"}</span><span><i className={role === "Pilot" && st.authorized ? "dep-ready" : ""} /> {role === "Commander" ? "You · authorize departure" : "Commander · authorize departure"}</span><span><i /> {role === "Pilot" ? `You · compare current heading ${Math.round(st.heading ?? 0)}° with Commander’s escape call` : `Pilot · align to ${role === "Commander" ? "the escape heading above" : "the heading Commander calls"}`}</span></>}
               </div>
               <details className="how-to">
@@ -661,7 +665,7 @@ export default function ControlRoom() {
                 )}
                 {role === "Pilot" && (
                   <>
-                    <section className={"panel " + (m.phase === 0 || m.phase === 1 || m.phase === 3 || m.phase === 4 ? "attention" : "")}>
+                    <section className={"panel " + (m.phase <= 4 ? "attention" : "")}>
                       <div className="panel-heading">
                         <h2>Navigation</h2>
                         <Compass size={22} />
@@ -754,7 +758,7 @@ export default function ControlRoom() {
                 )}
                 {role === "Engineer" && (
                   <>
-                    <section className={"panel power " + (m.phase === 0 || m.phase === 1 || m.phase === 3 || m.phase === 4 ? "attention" : "")}>
+                    <section className={"panel power " + (m.phase <= 4 ? "attention" : "")}>
                       <div className="panel-heading">
                         <h2>Power distribution</h2>
                         <span>ROUTE POWER TO CRITICAL SYSTEMS</span>
@@ -880,25 +884,6 @@ export default function ControlRoom() {
                 )}
               </div>
               <aside>
-                <section className="mission-alert">
-                  <div>
-                    <AlertTriangle size={38} />
-                    <label>MISSION ALERT</label>
-                  </div>
-                  <h1>{phases[m.phase]}</h1>
-                  <p>{phaseHints[m.phase]}</p>
-                  <div className="objectives">
-                    <span className={m.completedAt[0] ? "done" : ""}>
-                      <Check size={15} /> First storm hold
-                    </span>
-                    <span className={m.repairedAt ? "done" : ""}>
-                      <Check size={15} /> Coolant restored
-                    </span>
-                    <span className={m.completedAt[1] ? "done" : ""}>
-                      <Check size={15} /> Second storm hold
-                    </span>
-                  </div>
-                </section>
                 <section className="panel vessel">
                   <h2>Ship systems overview</h2>
                   <Ship alert={m.phase === 2 && !m.repairedAt} />
