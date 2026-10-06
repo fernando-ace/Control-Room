@@ -197,6 +197,8 @@ header {
 .icon-button {
   padding: 10px;
   background: transparent;
+  min-width: 44px;
+  min-height: 44px;
 }
 .sound {
   padding: 14px;
@@ -236,6 +238,8 @@ header {
   border: 0;
   font-size: 22px;
   padding: 6px;
+  min-width: 44px;
+  min-height: 44px;
 }
 .telemetry {
   display: grid;
@@ -506,6 +510,10 @@ aside {
   font-size: 9px;
   white-space: nowrap;
 }
+.crew .danger-quiet {
+  min-width: 44px;
+  min-height: 44px;
+}
 .crew > button {
   flex-shrink: 0;
 }
@@ -562,6 +570,7 @@ aside {
 .entry-form button {
   width: 100%;
   margin-top: 16px;
+  min-height: 50px;
 }
 .entry-form small {
   display: block;
@@ -617,6 +626,34 @@ aside {
 .seat.mine {
   border-color: var(--cyan);
 }
+.seat[data-role="commander"] { border-left: 3px solid #45def0; }
+.seat[data-role="pilot"] { border-left: 3px solid #a6a0ff; }
+.seat[data-role="engineer"] { border-left: 3px solid #ffc15c; }
+.seat.mine[data-role] { box-shadow: inset 3px 0 var(--cyan); }
+.seat[data-role="commander"] .station-icon,
+.briefing.role-commander h1 { color: #45def0; }
+.seat[data-role="pilot"] .station-icon,
+.briefing.role-pilot h1 { color: #b8b3ff; }
+.seat[data-role="engineer"] .station-icon,
+.briefing.role-engineer h1 { color: #ffc15c; }
+.host-badge,
+.you-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 3px 6px;
+  border: 1px solid #537187;
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 9px;
+  letter-spacing: .08em;
+  vertical-align: 2px;
+}
+.you-badge {
+  color: #06202c;
+  background: var(--cyan);
+  border-color: var(--cyan);
+}
+.host-badge { color: var(--amber); border-color: #806c43; }
 .seat > div {
   flex: 1;
 }
@@ -628,6 +665,22 @@ aside {
   font-size: 12px;
   color: var(--muted);
   margin-top: 9px;
+}
+.lobby-waiting {
+  border-left: 2px solid var(--amber);
+  padding: 8px 12px;
+  background: #ffc15c0b;
+  font-size: 13px;
+  margin: 12px 0 2px;
+}
+.danger-quiet {
+  color: #ffc7bc;
+  border-color: #80514a;
+  background: #351e20;
+}
+.danger-quiet:hover:not(:disabled) {
+  border-color: #ff9a8e;
+  background: #4b2728;
 }
 .lobby > .panel > button {
   margin-right: 12px;
@@ -855,6 +908,26 @@ aside {
   }
   .entry-form {
     padding: 24px;
+  }
+  .copy-feedback {
+    font: 11px Arial, sans-serif;
+    letter-spacing: 0;
+  }
+  .seat {
+    flex-wrap: wrap;
+  }
+  .seat > div {
+    min-width: 0;
+  }
+  .seat .small {
+    margin-left: auto;
+    min-height: 44px;
+    font-size: 11px;
+    padding: 10px;
+  }
+  .lobby > .panel > button {
+    width: 100%;
+    margin-right: 0;
   }
   .entry-facts {
     margin: 20px 0;

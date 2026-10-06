@@ -46,13 +46,22 @@ test("three independent sessions complete Solar Storm, reconnect, fail, and retr
     });
     await page.goto("/");
     await expect(
-      page.getByText("No signup. Just your name and a room code.", {
-        exact: true,
-      }),
+      page.getByText(
+        "No account needed. Your name and a six-character code are all you need.",
+        { exact: true },
+      ),
     ).toBeVisible({ timeout: 30000 });
-    await page
-      .getByLabel("YOUR NAME")
-      .fill(["Commander QA", "Pilot QA", "Engineer QA", "Fourth QA"][index]);
+    if (index === 3) {
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Tab");
+      await expect(page.getByLabel("YOUR NAME")).toBeFocused();
+      await page.keyboard.type("Fourth QA");
+    } else {
+      await page
+        .getByLabel("YOUR NAME")
+        .fill(["Commander QA", "Pilot QA", "Engineer QA"][index]);
+    }
     await expect(page.getByRole("button", { name: /Create room/ })).toBeEnabled({
       timeout: 30000,
     });
@@ -64,6 +73,11 @@ test("three independent sessions complete Solar Storm, reconnect, fail, and retr
     timeout: 30000,
   });
   const code = last.get(c)!.code;
+  await c.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await c.getByRole("button", { name: "Copy room code" }).click();
+  await expect(
+    c.getByRole("status").filter({ hasText: "Copied!" }),
+  ).toBeVisible();
   for (const [page, name] of [
     [p, "Pilot QA"],
     [e, "Engineer QA"],
@@ -95,10 +109,22 @@ test("three independent sessions complete Solar Storm, reconnect, fail, and retr
   await expect(c.locator(".briefing")).toContainText("crew’s eyes");
   await expect(p.locator(".briefing")).toContainText("course and launch control");
   await expect(e.locator(".briefing")).toContainText("powered and cool");
-  await pages[3].getByLabel("YOUR NAME").fill("Fourth QA");
-  await pages[3].getByLabel("ROOM CODE").fill(code);
-  await pages[3].getByRole("button", { name: "Join room", exact: true }).click();
-  await expect(pages[3].locator(".error")).toContainText("Room is full");
+  await pages[3].keyboard.press("Tab");
+  await expect(
+    pages[3].getByRole("button", { name: "Create room" }),
+  ).toBeFocused();
+  await pages[3].keyboard.press("Tab");
+  await expect(pages[3].getByLabel("ROOM CODE")).toBeFocused();
+  await pages[3].keyboard.type(code.toLowerCase());
+  await expect(pages[3].getByLabel("ROOM CODE")).toHaveValue(code);
+  await pages[3].keyboard.press("Tab");
+  await expect(
+    pages[3].getByRole("button", { name: "Join room" }),
+  ).toBeFocused();
+  await pages[3].keyboard.press("Enter");
+  await expect(pages[3].locator(".error")).toContainText(
+    "That room already has three players.",
+  );
   await expect
     .poll(() => last.get(c)?.players.length, { timeout: 8000, intervals: [250] })
     .toBe(3);
@@ -242,20 +268,20 @@ test("three independent sessions complete Solar Storm, reconnect, fail, and retr
   await c
     .locator(".seat")
     .filter({ hasText: "Pilot QA" })
-    .getByRole("button", { name: "Swap with me" })
+    .getByRole("button", { name: "Swap role" })
     .click();
   await expect(p.locator(".briefing h1")).toHaveText("Commander");
   await c
     .locator(".seat")
     .filter({ hasText: "Pilot QA" })
-    .getByRole("button", { name: "Swap with me" })
+    .getByRole("button", { name: "Swap role" })
     .click();
   await expect(p.locator(".briefing h1")).toHaveText("Pilot");
   const ready = async () => {
     await Promise.all(
       crewPages.map((page) =>
         page
-          .getByRole("button", { name: "Station ready", exact: true })
+          .getByRole("button", { name: "Mark station ready", exact: true })
           .click(),
       ),
     );
