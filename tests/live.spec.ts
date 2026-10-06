@@ -1,8 +1,57 @@
 import { expect, test, Page } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
+import { existsSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import type { BrowserContext } from "@playwright/test";
 import type { Snapshot } from "../lib/types";
-process.loadEnvFile(".env.local");
+if (existsSync(".env.local")) process.loadEnvFile(".env.local");
+
+const authStateDir =
+  process.env.LIVE_AUTH_STATE_DIR ?? join(process.cwd(), ".playwright", "live-auth");
+const authStatePaths = [0, 1, 2, 3].map((index) =>
+  join(
+    authStateDir,
+    process.env.LIVE_AUTH_STATE_DIR
+      ? `state-${index}.json`
+      : `session-${index}.json`,
+  ),
+);
+let activeContexts: BrowserContext[] = [];
+let qaRoom: { id: string; code: string } | null = null;
+
+test.afterEach(async () => {
+  try {
+    if (qaRoom) {
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const key = process.env.SUPABASE_SECRET_KEY;
+      if (!url || !key) throw new Error("Live test cleanup needs the Supabase server key");
+      const db = createClient(url, key, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data, error } = await db
+        .from("cr_rooms")
+        .delete()
+        .eq("id", qaRoom.id)
+        .eq("code", qaRoom.code)
+        .select("id");
+      if (error) throw new Error(`Could not remove QA room: ${error.message}`);
+      if (data.length === 0) {
+        const { data: remaining, error: verifyError } = await db
+          .from("cr_rooms")
+          .select("id")
+          .eq("id", qaRoom.id)
+          .eq("code", qaRoom.code);
+        if (verifyError) throw new Error(`Could not verify QA room cleanup: ${verifyError.message}`);
+        if (remaining.length > 0) throw new Error("QA room still exists after cleanup");
+      }
+      qaRoom = null;
+    }
+  } finally {
+    await Promise.all(activeContexts.map((context) => context.close().catch(() => {})));
+    activeContexts = [];
+  }
+});
 
 type ApiResult = { status: number; body: Record<string, unknown> };
 // This suite requires real Supabase credentials and runs at real mission speed.
@@ -11,10 +60,13 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
   browser,
 }) => {
   test.setTimeout(540000);
-  const authStateDir = process.env.LIVE_AUTH_STATE_DIR;
-  const contexts = await Promise.all([0, 1, 2, 3].map((index) => browser.newContext(
-    authStateDir ? { storageState: join(authStateDir, `state-${index}.json`) } : {},
-  )));
+  await mkdir(authStateDir, { recursive: true });
+  const contexts = await Promise.all(
+    authStatePaths.map((path) =>
+      browser.newContext({ storageState: existsSync(path) ? path : undefined }),
+    ),
+  );
+  activeContexts = contexts;
   const pages = await Promise.all(contexts.map((c) => c.newPage()));
   for (const page of pages) page.setDefaultTimeout(15000);
   const [c, p, e] = pages;
@@ -66,10 +118,18 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
   }
   await Promise.all(pages.map(async (page, index) => {
     await page.goto("/");
-    await page.getByText(
-      "No account needed. Your name and a six-character code are all you need.",
-      { exact: true },
-    ).waitFor({ state: "visible", timeout: 30000 });
+    const authState = await page.waitForFunction(
+      () => {
+        const body = document.body.innerText;
+        if (body.includes("No account needed. Your name and a six-character code are all you need.")) return "ready";
+        if (body.includes("Request rate limit reached")) return "auth-rate-limited";
+        return false;
+      },
+      undefined,
+      { timeout: 30000 },
+    ).then((handle) => handle.jsonValue() as Promise<"ready" | "auth-rate-limited">);
+    if (authState === "auth-rate-limited")
+      throw new Error("Supabase rate-limited anonymous sign-in before the live test started.");
     await page.getByLabel("YOUR NAME").fill(["Commander QA", "Pilot QA", "Engineer QA", "Fourth QA"][index]);
     const createRoom = page.getByRole("button", { name: /Create room/ });
     let authError: string | null = null;
@@ -79,11 +139,26 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
       return ready || Boolean(authError);
     }, { timeout: 300000, intervals: [250] }).toBe(true);
     if (authError) throw new Error(`Supabase anonymous sign-in failed: ${authError}`);
-    await expect(page.getByText("No signup. Just your name and a room code.", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText(
+        "No account needed. Your name and a six-character code are all you need.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await contexts[index].storageState({ path: authStatePaths[index] });
   }));
   await c.getByLabel("YOUR NAME").fill("Commander QA");
   await expect(c.getByRole("button", { name: /Create room/ })).toBeEnabled();
+  const createdRoomResponse = c.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/room") &&
+      response.request().method() === "POST" &&
+      response.ok(),
+  );
   await c.getByRole("button", { name: /Create room/ }).click();
+  const createdSnapshot = (await (await createdRoomResponse).json()) as Snapshot;
+  last.set(c, createdSnapshot);
+  qaRoom = { id: createdSnapshot.id, code: createdSnapshot.code };
   await expect(c.getByRole("heading", { name: "Flight crew" })).toBeVisible({
     timeout: 30000,
   });
@@ -484,11 +559,13 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
   // Host removal, guest leave/rejoin, and host transfer remain room scoped.
   c.once("dialog", (dialog) => void dialog.accept());
   await c.getByRole("button", { name: "Remove Pilot QA from room" }).click();
-  await expect(p.getByRole("heading", { name: "Assemble your crew" })).toBeVisible({ timeout: 15000 });
+  await expect(p.getByRole("heading", { name: "Start your crew" })).toBeVisible({ timeout: 15000 });
   await p.getByLabel("YOUR NAME").fill("Pilot QA");
   await p.getByLabel("ROOM CODE").fill(code);
   await p.getByRole("button", { name: "Join room", exact: true }).click();
-  await expect(p.locator(".error")).toContainText("removed you from this room");
+  await expect(p.locator(".error")).toContainText(
+    "You were removed from this room and can’t rejoin it.",
+  );
   await e.getByRole("button", { name: "Leave room", exact: true }).click();
   await expect(e.getByText("You left the room.")).toBeVisible();
   await e.getByLabel("ROOM CODE").fill(code);
@@ -502,5 +579,4 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
   expect(runtimeErrors.filter((message) =>
     !/status of (?:400 \(Bad Request\)|410 \(Gone\))/.test(message),
   )).toEqual([]);
-  for (const context of contexts) await context.close();
 });
