@@ -36,7 +36,9 @@ For local Supabase, `supabase/config.toml` enables anonymous sign-ins. The inclu
 
 ## Deploy to Vercel
 
-Import the source folder as a Next.js project. Set the three environment variables above, use Node.js 22 or newer, and deploy. The build command is `npm run build`. No long-lived process, cron job, WebSocket server, or runtime AI key is required. Realtime uses Supabase's service directly.
+Connect the GitHub repository `fernando-ace/Control-Room` to the Vercel project and use `master` as its production branch. Production releases should come from pushes to that branch; pull requests and other branches use Vercel Preview deployments. Do not deploy production from a local Vercel CLI command.
+
+Set the three environment variables above in both Production and Preview. Preview uses the same Supabase project as Production and is protected by Vercel SSO. Keep `SUPABASE_SECRET_KEY` server-only. Use Node.js 24.x (or a supported newer version); the build command is `npm run build`. No long-lived process, cron job, WebSocket server, or runtime AI key is required. Realtime uses Supabase directly.
 
 ## Mission
 
