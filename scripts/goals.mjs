@@ -46,6 +46,17 @@ export function validateRoadmap(roadmap, hasPrompt = () => true) {
   return [...new Set(errors)];
 }
 
+export function parseRoadmap(source, hasPrompt = () => true) {
+  let roadmap;
+  try {
+    roadmap = JSON.parse(source);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { roadmap: null, errors: [`Roadmap is not valid JSON: ${detail}`] };
+  }
+  return { roadmap, errors: validateRoadmap(roadmap, hasPrompt) };
+}
+
 export function readyGoals(goals) {
   const byId = new Map(goals.map((g) => [g.id, g]));
   return goals.filter((g) => !g.completed && g.dependsOn.every((id) => byId.get(id)?.completed === true));
@@ -66,20 +77,22 @@ function patternsOverlap(a, b) {
 export function recommendLanes(goals, limit = 3) {
   const available = readyGoals(goals).sort((a, b) => a.priority - b.priority);
   const primary = available.find((g) => g.parallelSafety === "low") ?? null;
-  // A low-safety core goal runs alone; do not pair it with an advisory lane.
-  if (primary) return { primary, parallel: [] };
-  const candidates = available.filter((g) => g.parallelSafety === "high" || g.parallelSafety === "medium");
+  const candidates = available
+    .filter((g) => g.parallelSafety === "high" || g.parallelSafety === "medium")
+    .sort((a, b) => safetyRank(a.parallelSafety) - safetyRank(b.parallelSafety) || a.priority - b.priority);
   const selected = [];
+  const parallelSlots = Math.max(0, limit - (primary ? 1 : 0));
   for (const goal of candidates) {
+    if (selected.length >= parallelSlots) break;
+    if (primary && goal.touches.some((p) => primary.touches.some((q) => patternsOverlap(p, q)))) continue;
     if (selected.some((other) => goal.touches.some((p) => other.touches.some((q) => patternsOverlap(p, q))))) continue;
     selected.push(goal);
-    if (selected.length >= limit) break;
+    if (selected.length >= parallelSlots) break;
   }
-  return {
-    primary: selected.shift() ?? null,
-    parallel: selected,
-  };
+  return { primary: primary ?? selected.shift() ?? null, parallel: selected };
 }
+
+function safetyRank(safety) { return safety === "high" ? 0 : safety === "medium" ? 1 : 2; }
 
 export function worktreePlan(goal, repoRoot, options = {}) {
   const slug = goal.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -90,11 +103,19 @@ export function worktreePlan(goal, repoRoot, options = {}) {
   return { branch, target, dryRun: options.dryRun === true };
 }
 
+export function worktreeGitArgs(plan) {
+  return ["worktree", "add", "-b", plan.branch, plan.target, "HEAD"];
+}
+
 function runGit(args) {
   return spawnSync("git", args, { cwd: root, encoding: "utf8", windowsHide: true });
 }
 
-function loadRoadmap() { return JSON.parse(readFileSync(roadmapPath, "utf8")); }
+function loadRoadmap() {
+  const parsed = parseRoadmap(readFileSync(roadmapPath, "utf8"), (prompt) => existsSync(path.join(root, prompt)));
+  if (parsed.errors.length) throw new Error(parsed.errors.join("\n"));
+  return parsed.roadmap;
+}
 function getGoal(roadmap, id) { return roadmap.goals.find((goal) => goal.id === id); }
 
 function printStatus(roadmap) {
@@ -157,7 +178,7 @@ function main(args) {
         if (branchCheck.status === 0) throw new Error(`Refusing to reuse existing branch: ${plan.branch}`);
         if (branchCheck.status !== 1) throw new Error(branchCheck.stderr || "Could not check branch name.");
         mkdirSync(path.dirname(plan.target), { recursive: true });
-        const result = runGit(["worktree", "add", "-b", plan.branch, plan.target, "HEAD"]);
+        const result = runGit(worktreeGitArgs(plan));
         if (result.status !== 0) throw new Error(result.stderr || result.stdout || "git worktree add failed.");
         console.log("Worktree created. The source worktree's uncommitted changes are not included.");
       }

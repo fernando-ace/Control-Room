@@ -17,3 +17,4 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Validate with `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build`; run live multiplayer/browser checks for relevant changes when credentials and services are available. Check responsive behavior near 390 px when UI changes.
 - Commit completed, reviewed goal work locally. Do not push or deploy unless explicitly asked. Keep commits scoped and preserve unrelated changes.
 - If any acceptance criterion cannot be honestly met, report the goal incomplete and identify the missing evidence.
+- Feature goals must not change `ROADMAP.json`, `goals/`, `scripts/goals.mjs`, or `docs/AGENT_WORKFLOW.md` unless their prompt explicitly requires it.

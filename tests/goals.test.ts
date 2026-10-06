@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { blockers, readyGoals, recommendLanes, validateRoadmap, worktreePlan } from "../scripts/goals.mjs";
+import { blockers, parseRoadmap, readyGoals, recommendLanes, validateRoadmap, worktreeGitArgs, worktreePlan } from "../scripts/goals.mjs";
+import { readFileSync } from "node:fs";
 
 const goal = (id: string, extra: Record<string, unknown> = {}) => ({
   id, title: id, dependsOn: [], priority: Number(id.slice(-2)), parallelSafety: "medium",
@@ -7,6 +8,31 @@ const goal = (id: string, extra: Record<string, unknown> = {}) => ({
 });
 
 describe("goal roadmap", () => {
+  it("parses JSON roadmap text and reports invalid JSON", () => {
+    expect(parseRoadmap(JSON.stringify({ goals: [goal("CR-01")] })).errors).toEqual([]);
+    expect(parseRoadmap("{not-json").errors[0]).toContain("not valid JSON");
+  });
+
+  it("provides a self-contained prompt with required sections for every roadmap goal", () => {
+    const source = readFileSync(new URL("../ROADMAP.json", import.meta.url), "utf8");
+    const parsed = parseRoadmap(source);
+    expect(parsed.errors).toEqual([]);
+    for (const roadmapGoal of parsed.roadmap.goals) {
+      const prompt = readFileSync(new URL(`../${roadmapGoal.prompt}`, import.meta.url), "utf8");
+      for (const section of ["Objective and context", "Dependencies", "Invariants", "Scope", "Non-goals", "Definition of done", "Validation and completion"]) {
+        expect(prompt, `${roadmapGoal.id} missing ${section}`).toContain(`## ${section}`);
+      }
+      expect(prompt.toLowerCase()).toContain("inspect");
+      expect(prompt.toLowerCase()).toContain("filenames");
+      expect(prompt.toLowerCase()).toMatch(/weaken|reduce assertions/);
+      expect(prompt.toLowerCase()).toContain("incomplete");
+      expect(prompt.toLowerCase()).toContain("report");
+      expect(prompt.toLowerCase()).toContain("commit");
+      expect(prompt.toLowerCase()).toContain("do not push or deploy");
+      expect(prompt.toLowerCase()).toContain("roadmap");
+    }
+  });
+
   it("validates unique IDs, prompts, dependencies, and safety values", () => {
     const roadmap = { goals: [goal("CR-01"), goal("CR-02", { dependsOn: ["CR-01"] })] };
     expect(validateRoadmap(roadmap)).toEqual([]);
@@ -31,16 +57,21 @@ describe("goal roadmap", () => {
 
   it("recommends a conservative batch and excludes overlapping paths", () => {
     const goals = [
-      goal("CR-02", { priority: 2, touches: ["components/**"] }),
+      goal("CR-02", { priority: 2, parallelSafety: "medium", touches: ["components/**"] }),
       goal("CR-03", { priority: 3, cloudSafe: false, touches: ["components/control-room.tsx"] }),
-      goal("CR-04", { priority: 4, touches: ["docs/**"] }),
+      goal("CR-04", { priority: 4, parallelSafety: "high", touches: ["docs/**"] }),
     ];
     const lanes = recommendLanes(goals);
-    expect(lanes.primary?.id).toBe("CR-02");
-    expect(lanes.parallel.map((g) => g.id)).toEqual(["CR-04"]);
+    expect(lanes.primary?.id).toBe("CR-04");
+    expect(lanes.parallel.map((g) => g.id)).toEqual(["CR-02"]);
     const coreLanes = recommendLanes([goal("CR-01", { parallelSafety: "low" }), ...goals]);
     expect(coreLanes.primary?.id).toBe("CR-01");
-    expect(coreLanes.parallel).toEqual([]);
+    expect(coreLanes.parallel.map((g) => g.id)).toEqual(["CR-04", "CR-02"]);
+    const conflictingCore = recommendLanes([
+      goal("CR-01", { parallelSafety: "low", touches: ["components/**"] }),
+      ...goals,
+    ]);
+    expect(conflictingCore.parallel.map((g) => g.id)).toEqual(["CR-04"]);
   });
 
   it("builds a sibling worktree plan without creating it", () => {
@@ -48,5 +79,6 @@ describe("goal roadmap", () => {
     expect(plan.branch).toBe("goal/CR-02-gameplay-feedback-polish");
     expect(plan.target.replaceAll("\\", "/")).toBe("C:/work/Control-Room-cr-02");
     expect(plan.dryRun).toBe(true);
+    expect(worktreeGitArgs(plan)).toEqual(["worktree", "add", "-b", "goal/CR-02-gameplay-feedback-polish", plan.target, "HEAD"]);
   });
 });

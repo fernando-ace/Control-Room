@@ -24,4 +24,4 @@ The repository tooling prepares prompts and identifies suitable candidates; it d
 
 ## Current first batch
 
-Initially, CR-01, CR-02, CR-03, and CR-07 are READY. CR-01 is core and low-safety, so it is recommended for the primary local lane. CR-02, CR-03, and CR-07 all touch shared UI files; static declarations show no clearly independent parallel lane among them. Pick one after reviewing the current work, or explicitly coordinate file ownership before running another lane.
+Initially, CR-01, CR-02, CR-03, and CR-07 are READY. The first recommendation pairs CR-01 in the primary local lane with CR-02 in a cloud lane: their declared paths are separate, and CR-02 avoids authoritative game rules. CR-03 and CR-07 touch UI files shared with CR-02, so the static overlap check leaves them out of this batch. Review actual diffs and coordinate before starting additional work; path declarations cannot prove compatibility.
