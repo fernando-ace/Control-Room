@@ -12,7 +12,7 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
 }) => {
   test.setTimeout(540000);
   const authStateDir = process.env.LIVE_AUTH_STATE_DIR;
-  const contexts = await Promise.all([0, 1, 2].map((index) => browser.newContext(
+  const contexts = await Promise.all([0, 1, 2, 3].map((index) => browser.newContext(
     authStateDir ? { storageState: join(authStateDir, `state-${index}.json`) } : {},
   )));
   const pages = await Promise.all(contexts.map((c) => c.newPage()));
@@ -66,19 +66,18 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
   }
   await Promise.all(pages.map(async (page, index) => {
     await page.goto("/");
-    await page
-      .getByLabel("YOUR NAME")
-      .fill(["Commander QA", "Pilot QA", "Engineer QA"][index]);
+    await page.getByText(
+      "No account needed. Your name and a six-character code are all you need.",
+      { exact: true },
+    ).waitFor({ state: "visible", timeout: 30000 });
+    await page.getByLabel("YOUR NAME").fill(["Commander QA", "Pilot QA", "Engineer QA", "Fourth QA"][index]);
     const createRoom = page.getByRole("button", { name: /Create room/ });
     let authError: string | null = null;
     await expect.poll(async () => {
       const ready = await createRoom.isEnabled();
       authError = (await page.locator(".error").allTextContents())[0] ?? null;
       return ready || Boolean(authError);
-    }, {
-      timeout: 300000,
-      intervals: [250],
-    }).toBe(true);
+    }, { timeout: 300000, intervals: [250] }).toBe(true);
     if (authError) throw new Error(`Supabase anonymous sign-in failed: ${authError}`);
     await expect(page.getByText("No signup. Just your name and a room code.", { exact: true })).toBeVisible();
   }));
@@ -91,7 +90,9 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
   const code = last.get(c)!.code;
   await c.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await c.getByRole("button", { name: "Copy room code" }).click();
-  await expect(c.getByText("Copied!", { exact: true })).toBeVisible();
+  await expect(
+    c.getByRole("status").filter({ hasText: "Copied!" }),
+  ).toBeVisible();
   for (const [page, name] of [
     [p, "Pilot QA"],
     [e, "Engineer QA"],
@@ -130,6 +131,18 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
   await expect(c.locator(".briefing")).toContainText("crew’s eyes");
   await expect(p.locator(".briefing")).toContainText("course and launch control");
   await expect(e.locator(".briefing")).toContainText("powered and cool");
+  await pages[3].keyboard.press("Tab");
+  await expect(pages[3].getByRole("button", { name: "Create room" })).toBeFocused();
+  await pages[3].keyboard.press("Tab");
+  await expect(pages[3].getByLabel("ROOM CODE")).toBeFocused();
+  await pages[3].keyboard.type(code.toLowerCase());
+  await expect(pages[3].getByLabel("ROOM CODE")).toHaveValue(code);
+  await pages[3].keyboard.press("Tab");
+  await expect(pages[3].getByRole("button", { name: "Join room" })).toBeFocused();
+  await pages[3].keyboard.press("Enter");
+  await expect(pages[3].locator(".error")).toContainText("That room already has three players.");
+  await expect.poll(() => last.get(c)?.players.length, { timeout: 8000, intervals: [250] }).toBe(3);
+
   const tokenFor = (page: Page) =>
     page.evaluate(() => {
       const key = Object.keys(localStorage).find(
@@ -236,11 +249,16 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
       });
       return { status: response.status, body: await response.json() };
     }, { actionId, action, extras });
+  // Exercise host swapping, then restore the original stations.
+  await c.locator(".seat").filter({ hasText: "Pilot QA" }).getByRole("button", { name: "Swap role" }).click();
+  await expect(p.locator(".briefing h1")).toHaveText("Commander");
+  await c.locator(".seat").filter({ hasText: "Pilot QA" }).getByRole("button", { name: "Swap role" }).click();
+  await expect(p.locator(".briefing h1")).toHaveText("Pilot");
   const ready = async () => {
     await Promise.all(
       crewPages.map((page) =>
         page
-          .getByRole("button", { name: "Station ready", exact: true })
+          .getByRole("button", { name: "Mark station ready", exact: true })
           .click(),
       ),
     );

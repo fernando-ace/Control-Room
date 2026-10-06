@@ -38,6 +38,33 @@ const phases = [
   "Second storm wave",
   "Escape window",
 ];
+function friendlyError(message: string) {
+  const lower = message.toLowerCase();
+  if (lower.includes("room not found"))
+    return "We couldn’t find that room. Check the code with your host and try again.";
+  if (lower.includes("room is full") || lower.includes("room full"))
+    return "That room already has three players.";
+  if (
+    lower.includes("removed you") ||
+    lower.includes("no longer have access") ||
+    lower.includes("no longer a member")
+  )
+    return "You were removed from this room and can’t rejoin it.";
+  if (lower.includes("enter your name")) return "Enter your name to continue.";
+  if (lower.includes("six-character") || lower.includes("six character"))
+    return "Enter the full six-character room code.";
+  if (lower.includes("session expired") || lower.includes("no session"))
+    return "Your connection expired. Refresh the page to reconnect.";
+  if (lower.includes("only the host"))
+    return "Only the host can make that change.";
+  if (lower.includes("three connected, ready players"))
+    return "All three players must be connected and ready before launch.";
+  if (lower.includes("network") || lower.includes("fetch") || lower.includes("connection"))
+    return "We couldn’t reach the room. Check your internet and try again.";
+  if (lower.includes("server configuration") || lower.includes("supabase"))
+    return "Mission control is temporarily unavailable. Please try again shortly.";
+  return "That didn’t work. Please try again.";
+}
 export default function ControlRoom() {
   const [room, setRoom] = useState<Snapshot | null>(null),
     [name, setName] = useState(""),
@@ -45,6 +72,7 @@ export default function ControlRoom() {
     [error, setError] = useState(""),
     [roomCodeCopied, setRoomCodeCopied] = useState(false),
     [busy, setBusy] = useState(false),
+    [pendingOperation, setPendingOperation] = useState<"create" | "join" | null>(null),
     [identity, setIdentity] = useState(false),
     [network, setNetwork] = useState("Connecting"),
     [muted, setMuted] = useState(true),
@@ -61,7 +89,7 @@ export default function ControlRoom() {
     setRoom(null);
     localStorage.removeItem("cr-room");
     setNetwork("Connected");
-    setError(message);
+    setError(friendlyError(message));
   }, []);
   const accept = useCallback((s: Snapshot) => {
     if (
@@ -139,7 +167,11 @@ export default function ControlRoom() {
         }
       } catch (e) {
         if (alive)
-          setError(e instanceof Error ? e.message : "Could not connect");
+          setError(
+            e instanceof Error
+              ? friendlyError(e.message)
+              : "We couldn’t connect. Check your internet and try again.",
+          );
       }
     })();
     return () => {
@@ -167,7 +199,11 @@ export default function ControlRoom() {
       } catch (e) {
         if (alive) {
           setNetwork("Reconnecting");
-          setError(e instanceof Error ? e.message : "Connection lost");
+          setError(
+            e instanceof Error
+              ? friendlyError(e.message)
+              : "Connection interrupted. Reconnecting to your crew…",
+          );
         }
       } finally {
         syncInFlight = false;
@@ -260,7 +296,7 @@ export default function ControlRoom() {
       }
       window.setTimeout(() => setActionFeedback(""), 5000);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Action failed");
+      setError(e instanceof Error ? friendlyError(e.message) : "That didn’t work. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -272,7 +308,7 @@ export default function ControlRoom() {
     try {
       await call("leave", room.code);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not leave the room");
+      setError(e instanceof Error ? friendlyError(e.message) : "We couldn’t leave the room. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -285,20 +321,26 @@ export default function ControlRoom() {
     try {
       await call("kick", room.code, undefined, undefined, playerId);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not remove guest");
+      setError(e instanceof Error ? friendlyError(e.message) : "We couldn’t remove that player. Please try again.");
     } finally {
       setBusy(false);
     }
   };
   const enter = async (op: string) => {
     setBusy(true);
+    setPendingOperation(op === "create" || op === "join" ? op : null);
     setError("");
     try {
       await call(op, code.toUpperCase(), undefined, name);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Connection failed");
+      setError(
+        e instanceof Error
+          ? friendlyError(e.message)
+          : "We couldn’t connect. Check your internet and try again.",
+      );
     } finally {
       setBusy(false);
+      setPendingOperation(null);
     }
   };
   const toggleSound = () => {
@@ -368,11 +410,12 @@ export default function ControlRoom() {
             <AlertTriangle size={16} /> SOLAR STORM
           </span>
           {room && (
-            <span className="room-code">
+            <div className="room-code">
               ROOM <b>{room.code}</b>
               <button
                 className="icon-button"
                 aria-label={roomCodeCopied ? "Room code copied" : "Copy room code"}
+                title={roomCodeCopied ? "Room code copied" : "Copy room code"}
                 onClick={async () => {
                   try {
                     await navigator.clipboard.writeText(room.code);
@@ -386,7 +429,7 @@ export default function ControlRoom() {
                 {roomCodeCopied ? <Check size={15} /> : <Copy size={15} />}
               </button>
               {roomCodeCopied && <span className="copy-feedback" role="status">Copied!</span>}
-            </span>
+            </div>
           )}
           <button
             className="icon-button sound"
@@ -417,8 +460,9 @@ export default function ControlRoom() {
               <span>One chance to survive.</span>
             </h1>
             <p>
-              A solar storm is closing in. Each of you has a different piece of
-              the answer. Talk, coordinate, and bring your spacecraft home.
+              Three players take the Commander, Pilot, and Engineer stations.
+              Share what you know, coordinate every move, and bring your ship
+              home.
             </p>
             <div className="entry-facts">
               <span>
@@ -437,8 +481,8 @@ export default function ControlRoom() {
               void enter("join");
             }}
           >
-            <h2>Assemble your crew</h2>
-            <p>Play together in person or on a voice call.</p>
+            <h2>Start your crew</h2>
+            <p>Create a room, then invite two players with your room code.</p>
             <label htmlFor="name">YOUR NAME</label>
             <input
               id="name"
@@ -454,7 +498,8 @@ export default function ControlRoom() {
               disabled={!identity || busy || !name.trim()}
               onClick={() => void enter("create")}
             >
-              Create room <Rocket size={18} />
+              {pendingOperation === "create" ? "Creating room…" : "Create room"}
+              {pendingOperation === "create" ? null : <Rocket size={18} />}
             </button>
             <div className="divider">OR JOIN YOUR CREW</div>
             <label htmlFor="code">ROOM CODE</label>
@@ -463,6 +508,9 @@ export default function ControlRoom() {
               maxLength={6}
               placeholder="Q7KM2A"
               className="code-input"
+              aria-describedby="room-code-help"
+              autoCapitalize="characters"
+              autoComplete="off"
               value={code}
               onChange={(e) =>
                 setCode(e.target.value.toUpperCase().replace(/[^A-Z2-9]/g, ""))
@@ -472,12 +520,12 @@ export default function ControlRoom() {
               type="submit"
               disabled={!identity || busy || !name.trim() || code.length !== 6}
             >
-              Join room
+              {pendingOperation === "join" ? "Joining room…" : "Join room"}
             </button>
-            <small>
+            <small id="room-code-help" aria-live="polite">
               {identity
-                ? "No signup. Just your name and a room code."
-                : "Connecting to mission control…"}
+                ? "No account needed. Your name and a six-character code are all you need."
+                : "Connecting… Your crew controls will be ready in a moment."}
             </small>
           </form>
         </section>
@@ -517,7 +565,11 @@ export default function ControlRoom() {
                     const p = room.players.find((p) => p.role === r);
                     return (
                       <div
-                        className={"seat " + (p?.id === room.me ? "mine" : "")}
+                        className={
+                          "seat role-" + r.toLowerCase() +
+                          (p?.id === room.me ? " mine" : "")
+                        }
+                        data-role={r.toLowerCase()}
                         key={r}
                       >
                         <span className="station-icon">
@@ -530,15 +582,23 @@ export default function ControlRoom() {
                           )}
                         </span>
                         <div>
-                          <label>{r}</label>
+                          <label>
+                            {r}
+                            {p?.id === room.hostId && (
+                              <span className="host-badge">HOST</span>
+                            )}
+                            {p?.id === room.me && (
+                              <span className="you-badge">YOU</span>
+                            )}
+                          </label>
                           <h3>{p?.name ?? "Waiting for crew…"}</h3>
                           <span className="seat-status">
                             {p
                               ? clock - p.seenAt >= 15000
                                 ? "Reconnecting"
                                 : p.ready
-                                  ? "Ready"
-                                  : "Reviewing briefing"
+                                  ? "Ready for launch"
+                                  : "Not ready"
                               : "Open station"}
                           </span>
                         </div>
@@ -547,11 +607,12 @@ export default function ControlRoom() {
                           <button
                             className="small"
                             disabled={busy}
+                            aria-label={`Swap role with ${p.name}, the ${r}`}
                             onClick={() =>
                               void run({ type: "swap", value: p.id })
                             }
                           >
-                            Swap with me
+                            Swap role
                           </button>
                         )}
                       </div>
@@ -562,9 +623,26 @@ export default function ControlRoom() {
                   className={me?.ready ? "selected" : "primary"}
                   disabled={busy}
                   onClick={() => void run({ type: "ready", value: !me?.ready })}
+                  aria-pressed={Boolean(me?.ready)}
                 >
-                  {me?.ready ? "Ready · Click to unready" : "Station ready"}
+                  {busy
+                    ? "Updating station…"
+                    : me?.ready
+                      ? "Ready · Click to unready"
+                      : "Mark station ready"}
                 </button>
+                <p className="lobby-waiting" aria-live="polite">
+                  {room.players.length < 3
+                    ? `Invite ${3 - room.players.length} more ${3 - room.players.length === 1 ? "player" : "players"} to fill the crew.`
+                    : room.players.some((p) => !p.ready)
+                      ? `Waiting for ${room.players
+                          .filter((p) => !p.ready)
+                          .map((p) => (p.id === room.me ? "you" : p.name))
+                          .join(", ")} to get ready.`
+                      : connected < 3
+                        ? "All stations are ready. Waiting for the full crew to reconnect."
+                        : "All three stations are ready. The host can launch when the crew is set."}
+                </p>
                 {host ? (
                   <button
                     disabled={
@@ -575,15 +653,15 @@ export default function ControlRoom() {
                     }
                     onClick={() => void run({ type: "start" })}
                   >
-                    Launch Solar Storm
+                    {busy ? "Preparing launch…" : "Launch Solar Storm"}
                   </button>
                 ) : (
                   <p className="waiting">
-                    The host will launch when all stations are ready.
+                    The host will launch when all three stations are ready and connected.
                   </p>
                 )}
               </div>
-              <div className="panel briefing">
+              <div className={`panel briefing role-${role?.toLowerCase() ?? ""}`}>
                 <label>YOUR STATION</label>
                 <h1>{role}</h1>
                 <p className="universal-brief">Everyone has different information and controls. Talk constantly: call out what you see, what you are doing, and when you are ready.</p>
@@ -1003,7 +1081,7 @@ export default function ControlRoom() {
                 {p.id === room.me && <small>YOUR STATION</small>}
                 {host && p.id !== room.me && (
                   <button
-                    className="small"
+                    className="small danger-quiet"
                     disabled={busy}
                     aria-label={`Remove ${p.name} from room`}
                     title={`Remove ${p.name} from room`}
