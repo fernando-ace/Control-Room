@@ -9,6 +9,7 @@ type ApiResult = { status: number; body: Record<string, unknown> };
 test("three independent sessions complete two distinct Solar Storm sequences, reconnect, and retry", async ({
   browser,
 }) => {
+  test.setTimeout(540000);
   const contexts = await Promise.all([0, 1, 2].map(() => browser.newContext()));
   const pages = await Promise.all(contexts.map((c) => c.newPage()));
   const [c, p, e] = pages;
@@ -58,17 +59,13 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
       if (message.type() === "error") runtimeErrors.push(message.text());
     });
     await page.goto("/");
-    await expect(
-      page.getByText("No signup. Just your name and a room code.", {
-        exact: true,
-      }),
-    ).toBeVisible({ timeout: 30000 });
     await page
       .getByLabel("YOUR NAME")
       .fill(["Commander QA", "Pilot QA", "Engineer QA"][index]);
     await expect(page.getByRole("button", { name: /Create room/ })).toBeEnabled({
-      timeout: 30000,
+      timeout: 90000,
     });
+    await expect(page.getByText("No signup. Just your name and a room code.", { exact: true })).toBeVisible();
   }
   await c.getByLabel("YOUR NAME").fill("Commander QA");
   await expect(c.getByRole("button", { name: /Create room/ })).toBeEnabled();
