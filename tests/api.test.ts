@@ -91,7 +91,7 @@ describe("authenticated room API and commit races", () => {
           action: { type: "sync" },
         })
       ).status,
-    ).toBe(400);
+    ).toBe(410);
   });
   it("preserves simultaneous ready and flight actions", async () => {
     const r = await create();
@@ -135,6 +135,10 @@ describe("authenticated room API and commit races", () => {
     ]);
     expect(actions.every((x) => x.status === 200)).toBe(true);
     const m = store.rooms.get(r.code)!.mission!;
+    expect(m.seed).toMatch(/^[a-f\d]{32}$/i);
+    const reconnect = (await request("p", { op: "action", code: r.code, action: { type: "sync", value: false } })).data as Snapshot;
+    expect(reconnect.mission?.variant).toEqual(m.variant);
+    expect(JSON.stringify(reconnect)).not.toContain(m.seed);
     expect(m.target).toBe(240);
     expect(m.power).toBe("Shield");
     expect(m.shield).toBe("Port");

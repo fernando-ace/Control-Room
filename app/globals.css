@@ -359,6 +359,7 @@ header {
 .objective-list .objective-done { color: #43dcb4; }
 .objective-list .objective-failed { color: #ff7d72; font-weight: 700; }
 .objective-list .objective-active { color: var(--amber); }
+.objective-list .objective-warning { color: #ffbf69; font-weight: 700; }
 .objective-list .objective-waiting { opacity: .68; }
 .dependencies { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 7px 18px; padding-top: 10px; border-top: 1px solid #604e2d; }
 .dependencies b { color: var(--amber); font: 11px "Courier New", monospace; letter-spacing: .1em; }
