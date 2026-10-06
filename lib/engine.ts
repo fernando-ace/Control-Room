@@ -1,16 +1,60 @@
 import { Action, Mission, Player, ROLES, Room, Snapshot } from "./types";
+import { createHash, randomBytes } from "node:crypto";
+import type { MissionEvent, MissionVariant } from "./types";
 const angle = (a: number, b: number) => Math.abs(((a - b + 540) % 360) - 180);
 export const phaseAt = (m: Mission, t: number) => {
   const e = (t - m.startAt) / 1000;
-  return e < 12 ? 0 : e < 50 ? 1 : e < 90 ? 2 : e < 130 ? 3 : 4;
+  return m.variant.stageStarts.findIndex((s) => e < s) === -1
+    ? 4
+    : m.variant.stageStarts.findIndex((s) => e < s);
 };
-export function newMission(now: number, random = Math.random): Mission {
+const patterns: MissionVariant[] = [
+  { name: "Sunstroke", order: ["storm-1", "coolant", "storm-2"], stageStarts: [12, 52, 94, 130], coolantAt: 52, intelRole: "Commander" },
+  { name: "Cold Front", order: ["coolant", "storm-1", "storm-2"], stageStarts: [12, 50, 91, 130], coolantAt: 12, intelRole: "Engineer" },
+  { name: "Double Flash", order: ["storm-1", "storm-2", "coolant"], stageStarts: [13, 54, 96, 132], coolantAt: 96, intelRole: "Pilot" },
+  { name: "Black Ice", order: ["coolant", "storm-2", "storm-1"], stageStarts: [11, 57, 98, 134], coolantAt: 11, intelRole: "Commander" },
+  { name: "Crosswind", order: ["storm-2", "coolant", "storm-1"], stageStarts: [14, 55, 95, 131], coolantAt: 55, intelRole: "Engineer" },
+  { name: "Solar Echo", order: ["storm-2", "storm-1", "coolant"], stageStarts: [12, 51, 99, 135], coolantAt: 99, intelRole: "Pilot" },
+];
+export const missionPatterns = patterns;
+export function ensureMissionVariant(room: Room) {
+  const mission = room.mission as (Mission & { variant?: MissionVariant; seed?: string }) | null;
+  if (!mission || mission.variant) return;
+  const seed = createHash("sha256")
+    .update(`legacy-solar-storm:${room.id}:${mission.startAt}`)
+    .digest("hex")
+    .slice(0, 32);
+  mission.seed = seed;
+  mission.variant = {
+    name: "Solar Storm",
+    order: ["storm-1", "coolant", "storm-2"],
+    stageStarts: [12, 50, 90, 130],
+    coolantAt: 80,
+    intelRole: "Commander",
+  };
+  room.lastMissionSeed ??= seed;
+  room.lastVariantName ??= mission.variant.name;
+}
+function seedStream(seed: string) {
+  let state = 2166136261;
+  for (const char of seed) state = Math.imul(state ^ char.charCodeAt(0), 16777619) >>> 0;
+  return () => {
+    state ^= state << 13; state ^= state >>> 17; state ^= state << 5;
+    return (state >>> 0) / 0x100000000;
+  };
+}
+export function newMission(now: number, seed = randomBytes(16).toString("hex")): Mission {
+  if (!/^[a-f\d]{32}$/i.test(seed)) throw new Error("Invalid mission seed");
+  const random = seedStream(seed);
+  const variant = structuredClone(patterns[Math.floor(random() * patterns.length)]);
   const broken = ["A", "B", "C"][Math.floor(random() * 3)];
   const headings = [240, 60, 180];
   return {
+    seed,
+    variant,
     startAt: now,
     evaluatedAt: now,
-    deadlines: [12, 50, 80, 90, 130, 150].map((s) => now + s * 1000),
+    deadlines: [...variant.stageStarts, 150].map((s) => now + s * 1000),
     hull: 100,
     heading: 180,
     target: 180,
@@ -37,6 +81,13 @@ export function newMission(now: number, random = Math.random): Mission {
     },
   };
 }
+const eventForPhase = (m: Mission, phase: number): MissionEvent | null =>
+  phase >= 1 && phase <= 3 ? m.variant.order[phase - 1] : null;
+const waveForEvent = (event: MissionEvent | null) =>
+  event === "storm-1" ? 0 : event === "storm-2" ? 1 : -1;
+const coolantStarted = (m: Mission, now: number) => now >= m.startAt + m.variant.coolantAt * 1000;
+const coolantControlsOpen = (m: Mission, now: number) =>
+  phaseAt(m, now) >= m.variant.order.indexOf("coolant") + 1 && phaseAt(m, now) < 4;
 function protectedNow(m: Mission, wave: number, forward = false) {
   const delta = ((m.target - m.heading + 540) % 360) - 180;
   const h =
@@ -54,7 +105,7 @@ export function advance(m: Mission, now: number) {
   while (m.evaluatedAt < end && !m.result) {
     const t = m.evaluatedAt,
       p = phaseAt(m, t),
-      wave = p === 1 ? 0 : p === 3 ? 1 : -1;
+      wave = waveForEvent(eventForPhase(m, p));
     const valid = wave >= 0 && protectedNow(m, wave, true);
     if (wave >= 0 && !m.completedAt[wave]) {
       if (valid && m.holdSince[wave] === null) m.holdSince[wave] = t;
@@ -81,7 +132,7 @@ export function advance(m: Mission, now: number) {
     if (wave >= 0 && !m.completedAt[wave] && hold !== null)
       next = Math.min(next, hold + (wave === 0 ? 5000 : 8000));
     const storm = wave >= 0 && !m.completedAt[wave] && !valid ? 2 : 0;
-    const coolant = t >= m.startAt + 80000 && !m.repairedAt ? 1 : 0;
+    const coolant = coolantStarted(m, t) && !m.repairedAt ? 1 : 0;
     const rate = storm + coolant;
     if (rate > 0) next = Math.min(next, t + (m.hull / rate) * 1000);
     if (next <= t + 1e-8) {
@@ -94,7 +145,7 @@ export function advance(m: Mission, now: number) {
         Math.sign(delta) * Math.min(Math.abs(delta), 60 * dt) +
         360) %
       360;
-    if (t >= m.startAt + 50000 && !m.repairedAt)
+    if (coolantStarted(m, t) && !m.repairedAt)
       m.heat = Math.min(100, m.heat + dt);
     m.evaluatedAt = next;
     if (
@@ -158,10 +209,20 @@ export function apply(
       room.players.some((p) => !p.ready || now - p.seenAt > 15000)
     )
       throw new Error("Three connected, ready players are required");
-    room.mission = newMission(now);
+    let seed = randomBytes(16).toString("hex");
+    let mission = newMission(now, seed);
+    while (seed === room.lastMissionSeed || mission.variant.name === room.lastVariantName) {
+      seed = randomBytes(16).toString("hex");
+      mission = newMission(now, seed);
+    }
+    room.lastMissionSeed = seed;
+    room.lastVariantName = mission.variant.name;
+    room.mission = mission;
   } else if (action.type === "retry") {
     if (uid !== room.hostId || !m?.result)
       throw new Error("Only the host can retry after a result");
+    room.lastMissionSeed = m.seed;
+    room.lastVariantName = m.variant.name;
     room.mission = null;
     room.players.forEach((p) => (p.ready = false));
   } else {
@@ -193,21 +254,21 @@ export function apply(
         break;
       case "isolate":
         requireRole(player, "Engineer");
-        if (p < 2 || p > 3 || !["A", "B", "C"].includes(String(action.value)))
+        if (!coolantControlsOpen(m, now) || !["A", "B", "C"].includes(String(action.value)))
           throw new Error("Circuit control unavailable");
         m.isolated = String(action.value);
         m.vented = false;
         break;
       case "vent":
         requireRole(player, "Engineer");
-        if (p < 2 || !m.isolated || m.repairedAt)
+        if (!coolantControlsOpen(m, now) || !m.isolated || m.repairedAt)
           throw new Error("Isolate a circuit before venting");
         m.vented = true;
         m.heat = Math.max(20, m.heat - 35);
         break;
       case "reset":
         requireRole(player, "Engineer");
-        if (p < 2 || !m.isolated || !m.vented || m.repairedAt)
+        if (!coolantControlsOpen(m, now) || !m.isolated || !m.vented || m.repairedAt)
           throw new Error("Isolate, then vent, then reset");
         if (m.resetAt && now - m.resetAt < 3000)
           throw new Error("Reset cooling down");
@@ -288,6 +349,7 @@ export function snapshot(room: Room, uid: string, now: number): Snapshot {
           endedAt: m.endedAt,
           result: m.result,
           reason: m.reason,
+          variant: m.variant,
         }
       : null,
     station: !m
@@ -296,9 +358,9 @@ export function snapshot(room: Room, uid: string, now: number): Snapshot {
         ? {
             headings: m.secrets.headings,
             sectors: m.secrets.sectors,
-            brokenSymbol: m.secrets.symbols[m.secrets.broken],
             code: m.secrets.code,
             shield: m.shield,
+            ...(m.variant.intelRole === "Commander" ? { brokenSymbol: m.secrets.symbols[m.secrets.broken] } : {}),
           }
         : role === "Pilot"
           ? {
@@ -307,6 +369,7 @@ export function snapshot(room: Room, uid: string, now: number): Snapshot {
               engineReady: m.power === "Engines",
               codeEntered: m.codeEntered,
               authorized: Boolean(m.authorizedAt),
+            ...(m.variant.intelRole === "Pilot" ? { brokenSymbol: m.secrets.symbols[m.secrets.broken] } : {}),
             }
           : {
               power: m.power,
@@ -314,6 +377,7 @@ export function snapshot(room: Room, uid: string, now: number): Snapshot {
               isolated: m.isolated,
               vented: m.vented,
               symbols: m.secrets.symbols,
+            ...(m.variant.intelRole === "Engineer" ? { brokenSymbol: m.secrets.symbols[m.secrets.broken] } : {}),
             },
   };
 }

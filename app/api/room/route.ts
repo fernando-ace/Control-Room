@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomInt, randomUUID } from "node:crypto";
 import { admin } from "@/lib/server";
-import { apply, join, snapshot } from "@/lib/engine";
+import { apply, ensureMissionVariant, join, snapshot } from "@/lib/engine";
 import type { Room } from "@/lib/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,12 +66,13 @@ export async function POST(req: NextRequest) {
     const code = String(body.code ?? "").toUpperCase();
     if (!/^[A-Z2-9]{6}$/.test(code))
       throw new Error("Enter a six-character room code");
-    for (let attempt = 0; attempt < 10; attempt++) {
+    for (let attempt = 0; attempt < 25; attempt++) {
       const { data, error } = await db.rpc("cr_read", { p_code: code });
       if (error) throw new Error(error.message);
       if (!data) throw new Error("Room not found");
       const room = data.room as Room,
         now = Number(data.now);
+      ensureMissionVariant(room);
       const revision = room.revision;
       if (body.op === "join") join(room, uid, name, now);
       else if (body.op === "leave" || body.op === "kick") {
@@ -127,6 +128,8 @@ export async function POST(req: NextRequest) {
           headers: { "Cache-Control": "no-store" },
         });
       }
+      if (attempt < 24)
+        await new Promise((resolve) => setTimeout(resolve, randomInt(8, 25)));
     }
     return NextResponse.json(
       { error: "Room busy. Please retry." },

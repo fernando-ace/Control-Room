@@ -8,6 +8,8 @@ export type Player = {
   seenAt: number;
 };
 export type Mission = {
+  seed: string;
+  variant: MissionVariant;
   startAt: number;
   evaluatedAt: number;
   deadlines: number[];
@@ -36,6 +38,14 @@ export type Mission = {
     code: string;
   };
 };
+export type MissionEvent = "storm-1" | "storm-2" | "coolant";
+export type MissionVariant = {
+  name: string;
+  order: [MissionEvent, MissionEvent, MissionEvent];
+  stageStarts: [number, number, number, number];
+  coolantAt: number;
+  intelRole: Role;
+};
 export type Room = {
   id: string;
   code: string;
@@ -45,6 +55,8 @@ export type Room = {
   players: Player[];
   blockedPlayers?: string[];
   mission: Mission | null;
+  lastMissionSeed?: string;
+  lastVariantName?: string;
   processed: string[];
 };
 export type Action = { type: string; value?: string | number | boolean };
@@ -60,6 +72,7 @@ export type Shared = {
   endedAt: number | null;
   result: Mission["result"];
   reason: string | null;
+  variant: MissionVariant;
 };
 export type Station = {
   heading?: number;
