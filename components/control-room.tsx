@@ -40,6 +40,7 @@ const phases = [
 ];
 function friendlyError(message: string) {
   const lower = message.toLowerCase();
+  if (lower === "you left the room.") return message;
   if (lower.includes("room not found"))
     return "We couldn’t find that room. Check the code with your host and try again.";
   if (lower.includes("room is full") || lower.includes("room full"))
@@ -197,7 +198,7 @@ export default function ControlRoom() {
         });
         if (alive) setNetwork("Connected");
       } catch (e) {
-        if (alive) {
+        if (alive && roomRef.current?.id === room.id) {
           setNetwork("Reconnecting");
           setError(
             e instanceof Error

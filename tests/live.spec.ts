@@ -36,7 +36,15 @@ test.afterEach(async () => {
         .eq("code", qaRoom.code)
         .select("id");
       if (error) throw new Error(`Could not remove QA room: ${error.message}`);
-      if (data.length !== 1) throw new Error("QA room cleanup did not delete exactly one room");
+      if (data.length === 0) {
+        const { data: remaining, error: verifyError } = await db
+          .from("cr_rooms")
+          .select("id")
+          .eq("id", qaRoom.id)
+          .eq("code", qaRoom.code);
+        if (verifyError) throw new Error(`Could not verify QA room cleanup: ${verifyError.message}`);
+        if (remaining.length > 0) throw new Error("QA room still exists after cleanup");
+      }
       qaRoom = null;
     }
   } finally {
@@ -131,7 +139,12 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
       return ready || Boolean(authError);
     }, { timeout: 300000, intervals: [250] }).toBe(true);
     if (authError) throw new Error(`Supabase anonymous sign-in failed: ${authError}`);
-    await expect(page.getByText("No signup. Just your name and a room code.", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText(
+        "No account needed. Your name and a six-character code are all you need.",
+        { exact: true },
+      ),
+    ).toBeVisible();
     await contexts[index].storageState({ path: authStatePaths[index] });
   }));
   await c.getByLabel("YOUR NAME").fill("Commander QA");
@@ -546,11 +559,13 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
   // Host removal, guest leave/rejoin, and host transfer remain room scoped.
   c.once("dialog", (dialog) => void dialog.accept());
   await c.getByRole("button", { name: "Remove Pilot QA from room" }).click();
-  await expect(p.getByRole("heading", { name: "Assemble your crew" })).toBeVisible({ timeout: 15000 });
+  await expect(p.getByRole("heading", { name: "Start your crew" })).toBeVisible({ timeout: 15000 });
   await p.getByLabel("YOUR NAME").fill("Pilot QA");
   await p.getByLabel("ROOM CODE").fill(code);
   await p.getByRole("button", { name: "Join room", exact: true }).click();
-  await expect(p.locator(".error")).toContainText("removed you from this room");
+  await expect(p.locator(".error")).toContainText(
+    "You were removed from this room and can’t rejoin it.",
+  );
   await e.getByRole("button", { name: "Leave room", exact: true }).click();
   await expect(e.getByText("You left the room.")).toBeVisible();
   await e.getByLabel("ROOM CODE").fill(code);
