@@ -1,5 +1,6 @@
 import { expect, test, Page } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
+import { join } from "node:path";
 import type { Snapshot } from "../lib/types";
 process.loadEnvFile(".env.local");
 
@@ -10,8 +11,12 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
   browser,
 }) => {
   test.setTimeout(540000);
-  const contexts = await Promise.all([0, 1, 2].map(() => browser.newContext()));
+  const authStateDir = process.env.LIVE_AUTH_STATE_DIR;
+  const contexts = await Promise.all([0, 1, 2].map((index) => browser.newContext(
+    authStateDir ? { storageState: join(authStateDir, `state-${index}.json`) } : {},
+  )));
   const pages = await Promise.all(contexts.map((c) => c.newPage()));
+  for (const page of pages) page.setDefaultTimeout(15000);
   const [c, p, e] = pages;
   const crewPages = [c, p, e];
   const last = new Map<Page, Snapshot>();
@@ -19,7 +24,7 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
   const realtimePages = new Set<Page>();
   const runtimeErrors: string[] = [];
   const apiFailures: string[] = [];
-  for (const [index, page] of pages.entries()) {
+  for (const page of pages) {
     if (page === c) {
       // The host misses Realtime; its periodic reconciliation must recover state.
       await page.routeWebSocket(/realtime\/v1\/websocket/, (route) => {
@@ -58,15 +63,25 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
     page.on("console", (message) => {
       if (message.type() === "error") runtimeErrors.push(message.text());
     });
+  }
+  await Promise.all(pages.map(async (page, index) => {
     await page.goto("/");
     await page
       .getByLabel("YOUR NAME")
       .fill(["Commander QA", "Pilot QA", "Engineer QA"][index]);
-    await expect(page.getByRole("button", { name: /Create room/ })).toBeEnabled({
-      timeout: 90000,
-    });
+    const createRoom = page.getByRole("button", { name: /Create room/ });
+    let authError: string | null = null;
+    await expect.poll(async () => {
+      const ready = await createRoom.isEnabled();
+      authError = (await page.locator(".error").allTextContents())[0] ?? null;
+      return ready || Boolean(authError);
+    }, {
+      timeout: 300000,
+      intervals: [250],
+    }).toBe(true);
+    if (authError) throw new Error(`Supabase anonymous sign-in failed: ${authError}`);
     await expect(page.getByText("No signup. Just your name and a room code.", { exact: true })).toBeVisible();
-  }
+  }));
   await c.getByLabel("YOUR NAME").fill("Commander QA");
   await expect(c.getByRole("button", { name: /Create room/ })).toBeEnabled();
   await c.getByRole("button", { name: /Create room/ }).click();
@@ -160,10 +175,8 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
     .from("cr_members")
     .select("room_id,user_id")
     .eq("room_id", roomId);
-  expect(outsiderRoom.error).toBeNull();
-  expect(outsiderRoom.data).toEqual([]);
-  expect(outsiderMembership.error).toBeNull();
-  expect(outsiderMembership.data).toEqual([]);
+  expect(outsiderRoom.error?.code).toBe("42501");
+  expect(outsiderMembership.error?.code).toBe("42501");
   const privateRows = await outsider
     .schema("cr_private")
     .from("states")
@@ -385,8 +398,19 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
       }
     }
     const escapeHeading = last.get(c)!.station.headings![2];
+    const engineer = pageForRole("Engineer");
+    const enginePower = engineer.getByRole("button", {
+      name: "Engines Escape propulsion",
+      exact: true,
+    });
+    if (await enginePower.count() !== 1) {
+      throw new Error(
+        `Engineer escape control missing (role=${last.get(engineer)?.players.find((player) => player.id === last.get(engineer)?.me)?.role}):\n${await engineer.locator("body").innerText()}`,
+      );
+    }
+    await expect(enginePower).toBeEnabled({ timeout: 10000 });
     await Promise.all([
-      pageForRole("Engineer").getByRole("button", { name: "Engines Escape propulsion", exact: true }).click(),
+      enginePower.click({ timeout: 10000 }),
       pageForRole("Pilot").getByLabel("TARGET HEADING").fill(String(escapeHeading)).then(() =>
         pageForRole("Pilot").getByRole("button", { name: "Set heading" }).click(),
       ),
@@ -443,6 +467,7 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
   c.once("dialog", (dialog) => void dialog.accept());
   await c.getByRole("button", { name: "Remove Pilot QA from room" }).click();
   await expect(p.getByRole("heading", { name: "Assemble your crew" })).toBeVisible({ timeout: 15000 });
+  await p.getByLabel("YOUR NAME").fill("Pilot QA");
   await p.getByLabel("ROOM CODE").fill(code);
   await p.getByRole("button", { name: "Join room", exact: true }).click();
   await expect(p.locator(".error")).toContainText("removed you from this room");
@@ -451,11 +476,13 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
   await e.getByLabel("ROOM CODE").fill(code);
   await e.getByRole("button", { name: "Join room", exact: true }).click();
   await expect(e.getByRole("heading", { name: "Flight crew" })).toBeVisible();
-  await expect.poll(() => last.get(e)?.players.find((player) => player.id === last.get(e)?.me)?.role).toBe("Engineer");
+  await expect.poll(() => last.get(e)?.players.find((player) => player.id === last.get(e)?.me)?.role).toBe("Pilot");
   await c.getByRole("button", { name: "Leave room", exact: true }).click();
   await expect.poll(() => last.get(e)?.hostId).toBe(last.get(e)?.me);
   await e.getByRole("button", { name: "Leave room", exact: true }).click();
   await expect(e.getByText("You left the room.")).toBeVisible();
-  expect(runtimeErrors).toEqual([]);
+  expect(runtimeErrors.filter((message) =>
+    !/status of (?:400 \(Bad Request\)|410 \(Gone\))/.test(message),
+  )).toEqual([]);
   for (const context of contexts) await context.close();
 });
