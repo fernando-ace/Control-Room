@@ -497,6 +497,9 @@ aside {
   font-size: 9px;
   white-space: nowrap;
 }
+.crew > button {
+  flex-shrink: 0;
+}
 .page-foot {
   display: flex;
   justify-content: space-between;

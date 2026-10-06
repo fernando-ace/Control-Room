@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
       );
     const uid = user.user.id;
     const body = await req.json();
-    if (!["create", "join", "action"].includes(body.op))
+    if (!["create", "join", "action", "leave", "kick"].includes(body.op))
       throw new Error("Invalid request");
     if (
       typeof body.actionId !== "string" ||
@@ -32,7 +32,8 @@ export async function POST(req: NextRequest) {
     const name = String(body.name ?? "")
       .trim()
       .slice(0, 24);
-    if (body.op !== "action" && !name) throw new Error("Enter your name");
+    if (["create", "join"].includes(body.op) && !name)
+      throw new Error("Enter your name");
     if (body.op === "create") {
       for (let attempt = 0; attempt < 4; attempt++) {
         const now = Date.now();
@@ -73,7 +74,29 @@ export async function POST(req: NextRequest) {
         now = Number(data.now);
       const revision = room.revision;
       if (body.op === "join") join(room, uid, name, now);
-      else {
+      else if (body.op === "leave" || body.op === "kick") {
+        const targetId = body.op === "leave" ? uid : String(body.targetId ?? "");
+        if (body.op === "kick" && uid !== room.hostId)
+          throw new Error("Only the host can remove a guest");
+        if (!targetId || (body.op === "kick" && targetId === room.hostId))
+          throw new Error("The host cannot remove themselves");
+        const target = room.players.find((player) => player.id === targetId);
+        if (!target)
+          return NextResponse.json(
+            { error: "You are no longer a member of this room" },
+            { status: 410 },
+          );
+        room.players = room.players.filter((player) => player.id !== targetId);
+        if (body.op === "kick")
+          room.blockedPlayers = [...new Set([...(room.blockedPlayers ?? []), targetId])];
+        if (room.hostId === targetId && room.players.length)
+          room.hostId = room.players[0].id;
+      } else {
+        if (!room.players.some((player) => player.id === uid))
+          return NextResponse.json(
+            { error: "The host removed you from this room" },
+            { status: 410 },
+          );
         if (!body.action || typeof body.action.type !== "string")
           throw new Error("Invalid action");
         apply(room, uid, body.action, now, body.actionId);
@@ -92,10 +115,18 @@ export async function POST(req: NextRequest) {
         { p_room: room, p_expected: revision },
       );
       if (commitError) throw new Error(commitError.message);
-      if (committed)
+      if (committed) {
+        if (body.op === "leave")
+          return NextResponse.json(
+            { left: true },
+            {
+              headers: { "Cache-Control": "no-store" },
+            },
+          );
         return NextResponse.json(snapshot(room, uid, now), {
           headers: { "Cache-Control": "no-store" },
         });
+      }
     }
     return NextResponse.json(
       { error: "Room busy. Please retry." },

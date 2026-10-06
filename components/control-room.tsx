@@ -14,6 +14,7 @@ import {
   Volume2,
   VolumeX,
   Wrench,
+  UserMinus,
 } from "lucide-react";
 import { browserClient, ensureAnonymousSession } from "@/lib/browser";
 import { Action, Role, Snapshot } from "@/lib/types";
@@ -54,6 +55,13 @@ export default function ControlRoom() {
     offset = useRef(0),
     audio = useRef<AudioContext | null>(null),
     phaseRef = useRef(-1);
+  const clearMembership = useCallback((message: string) => {
+    roomRef.current = null;
+    setRoom(null);
+    localStorage.removeItem("cr-room");
+    setNetwork("Connected");
+    setError(message);
+  }, []);
   const accept = useCallback((s: Snapshot) => {
     if (
       roomRef.current &&
@@ -74,6 +82,7 @@ export default function ControlRoom() {
       roomCode?: string,
       action?: Action,
       playerName?: string,
+      targetId?: string,
     ) => {
       const db = browserClient();
       const { data } = await db.auth.getSession();
@@ -89,15 +98,24 @@ export default function ControlRoom() {
           code: roomCode,
           name: playerName,
           action,
+          targetId,
           actionId: crypto.randomUUID(),
         }),
       });
       const result = await response.json();
+      if (response.status === 410) {
+        clearMembership(result.error ?? "You no longer have access to this room.");
+        throw new Error(result.error ?? "You no longer have access to this room.");
+      }
       if (!response.ok) throw new Error(result.error ?? "Connection failed");
+      if (result.left) {
+        clearMembership("You left the room.");
+        return null;
+      }
       accept(result as Snapshot);
       return result as Snapshot;
     },
-    [accept],
+    [accept, clearMembership],
   );
   useEffect(() => {
     let alive = true;
@@ -206,6 +224,7 @@ export default function ControlRoom() {
     try {
       const beforeHull = room.mission?.hull;
       const updated = await call("action", room.code, action);
+      if (!updated) throw new Error("Room ended while sending the action.");
       if (beforeHull !== undefined && updated.mission && updated.mission.hull < beforeHull) {
         setActionFeedback(`Hull −${Math.round(beforeHull - updated.mission.hull)}% · the team took damage. Recheck the called heading, shield, and power.`);
       } else {
@@ -229,6 +248,31 @@ export default function ControlRoom() {
       window.setTimeout(() => setActionFeedback(""), 5000);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Action failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const leaveRoom = async () => {
+    if (!room || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await call("leave", room.code);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not leave the room");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const kickPlayer = async (playerId: string, playerName: string) => {
+    if (!room || busy || !host) return;
+    if (!window.confirm(`Remove ${playerName} from this room?`)) return;
+    setBusy(true);
+    setError("");
+    try {
+      await call("kick", room.code, undefined, undefined, playerId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not remove guest");
     } finally {
       setBusy(false);
     }
@@ -908,8 +952,22 @@ export default function ControlRoom() {
                   }
                 />
                 {p.id === room.me && <small>YOUR STATION</small>}
+                {host && p.id !== room.me && (
+                  <button
+                    className="small"
+                    disabled={busy}
+                    aria-label={`Remove ${p.name} from room`}
+                    title={`Remove ${p.name} from room`}
+                    onClick={() => void kickPlayer(p.id, p.name)}
+                  >
+                    <UserMinus size={16} />
+                  </button>
+                )}
               </div>
             ))}
+            <button className="small" disabled={busy} onClick={() => void leaveRoom()}>
+              Leave room
+            </button>
           </footer>
         </>
       )}

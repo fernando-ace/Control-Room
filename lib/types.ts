@@ -43,6 +43,7 @@ export type Room = {
   revision: number;
   createdAt: number;
   players: Player[];
+  blockedPlayers?: string[];
   mission: Mission | null;
   processed: string[];
 };

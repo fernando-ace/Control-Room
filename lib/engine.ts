@@ -318,6 +318,8 @@ export function snapshot(room: Room, uid: string, now: number): Snapshot {
   };
 }
 export function join(room: Room, uid: string, name: string, now: number) {
+  if (room.blockedPlayers?.includes(uid))
+    throw new Error("The host removed you from this room");
   const existing = room.players.find((p) => p.id === uid);
   if (existing) {
     existing.seenAt = now;
