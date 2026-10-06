@@ -10,7 +10,13 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:live": "playwright test tests/live.spec.ts",
-    "test:pre-mission": "playwright test tests/pre-mission.spec.ts"
+    "test:pre-mission": "playwright test tests/pre-mission.spec.ts",
+    "goals:validate": "node scripts/goals.mjs validate",
+    "goals:status": "node scripts/goals.mjs status",
+    "goals:ready": "node scripts/goals.mjs ready",
+    "goals:prompt": "node scripts/goals.mjs prompt",
+    "goals:complete": "node scripts/goals.mjs complete",
+    "goals:worktree": "node scripts/goals.mjs worktree"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

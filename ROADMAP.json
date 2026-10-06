@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "goals": [
+    {
+      "id": "CR-01",
+      "title": "Multi-mission architecture",
+      "dependsOn": [],
+      "priority": 1,
+      "parallelSafety": "low",
+      "cloudSafe": false,
+      "touches": ["lib/engine.ts", "lib/types.ts", "lib/server.ts", "tests/**"],
+      "prompt": "goals/CR-01.md",
+      "completed": false
+    },
+    {
+      "id": "CR-02",
+      "title": "Gameplay feedback polish",
+      "dependsOn": [],
+      "priority": 2,
+      "parallelSafety": "medium",
+      "cloudSafe": true,
+      "touches": ["components/**", "app/globals.css"],
+      "prompt": "goals/CR-02.md",
+      "completed": false
+    },
+    {
+      "id": "CR-03",
+      "title": "Reconnect and recovery UX polish",
+      "dependsOn": [],
+      "priority": 3,
+      "parallelSafety": "medium",
+      "cloudSafe": true,
+      "touches": ["components/control-room.tsx", "lib/browser.ts", "tests/**"],
+      "prompt": "goals/CR-03.md",
+      "completed": false
+    },
+    {
+      "id": "CR-04",
+      "title": "Post-game crew performance breakdown",
+      "dependsOn": ["CR-01"],
+      "priority": 4,
+      "parallelSafety": "medium",
+      "cloudSafe": true,
+      "touches": ["lib/types.ts", "lib/engine.ts", "components/**", "tests/**"],
+      "prompt": "goals/CR-04.md",
+      "completed": false
+    },
+    {
+      "id": "CR-05",
+      "title": "Second cooperative mission",
+      "dependsOn": ["CR-01"],
+      "priority": 5,
+      "parallelSafety": "low",
+      "cloudSafe": false,
+      "touches": ["lib/engine.ts", "lib/types.ts", "lib/server.ts", "components/**", "tests/**"],
+      "prompt": "goals/CR-05.md",
+      "completed": false
+    },
+    {
+      "id": "CR-06",
+      "title": "Deterministic emergency variation",
+      "dependsOn": ["CR-01"],
+      "priority": 6,
+      "parallelSafety": "medium",
+      "cloudSafe": true,
+      "touches": ["lib/engine.ts", "lib/types.ts", "tests/**"],
+      "prompt": "goals/CR-06.md",
+      "completed": false
+    },
+    {
+      "id": "CR-07",
+      "title": "Mobile and responsive polish",
+      "dependsOn": [],
+      "priority": 7,
+      "parallelSafety": "medium",
+      "cloudSafe": true,
+      "touches": ["components/**", "app/globals.css", "tests/live.spec.ts"],
+      "prompt": "goals/CR-07.md",
+      "completed": false
+    },
+    {
+      "id": "CR-08",
+      "title": "Parallel feature integration",
+      "dependsOn": ["CR-01", "CR-02", "CR-03", "CR-04", "CR-05", "CR-06", "CR-07"],
+      "priority": 8,
+      "parallelSafety": "low",
+      "cloudSafe": false,
+      "touches": ["**"],
+      "prompt": "goals/CR-08.md",
+      "completed": false
+    },
+    {
+      "id": "CR-09",
+      "title": "Adversarial verification",
+      "dependsOn": ["CR-08"],
+      "priority": 9,
+      "parallelSafety": "low",
+      "cloudSafe": false,
+      "touches": ["**"],
+      "prompt": "goals/CR-09.md",
+      "completed": false
+    }
+  ]
+}
