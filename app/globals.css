@@ -185,6 +185,15 @@ header {
   font-size: 21px;
   color: var(--cyan);
 }
+.copy-feedback {
+  color: var(--cyan);
+  font-size: 11px;
+  animation: copy-feedback-in 160ms ease-out;
+}
+@keyframes copy-feedback-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 .icon-button {
   padding: 10px;
   background: transparent;

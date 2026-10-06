@@ -43,6 +43,7 @@ export default function ControlRoom() {
     [name, setName] = useState(""),
     [code, setCode] = useState(""),
     [error, setError] = useState(""),
+    [roomCodeCopied, setRoomCodeCopied] = useState(false),
     [busy, setBusy] = useState(false),
     [identity, setIdentity] = useState(false),
     [network, setNetwork] = useState("Connecting"),
@@ -327,15 +328,20 @@ export default function ControlRoom() {
               ROOM <b>{room.code}</b>
               <button
                 className="icon-button"
-                aria-label="Copy room code"
-                onClick={() =>
-                  void navigator.clipboard
-                    .writeText(room.code)
-                    .catch(() => setError("Copy the room code shown above."))
-                }
+                aria-label={roomCodeCopied ? "Room code copied" : "Copy room code"}
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(room.code);
+                    setRoomCodeCopied(true);
+                    window.setTimeout(() => setRoomCodeCopied(false), 1800);
+                  } catch {
+                    setError("Copy the room code shown above.");
+                  }
+                }}
               >
-                <Copy size={15} />
+                {roomCodeCopied ? <Check size={15} /> : <Copy size={15} />}
               </button>
+              {roomCodeCopied && <span className="copy-feedback" role="status">Copied!</span>}
             </span>
           )}
           <button
