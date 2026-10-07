@@ -459,6 +459,24 @@ aside {
   letter-spacing: 0.2em;
   padding: 12px;
 }
+.ship-grid.critical { color: #ff8b73; background-color: #301914; }
+.ship-grid.strained { color: #f4c36f; }
+.ship-grid.alert svg { animation: reactor-pulse 1.8s ease-in-out infinite; }
+.vessel-status { display: grid; gap: 5px; justify-items: center; padding: 10px 12px 14px; text-align: center; }
+.vessel-status > span { font: 10px "Courier New", monospace; letter-spacing: .16em; }
+.vessel-status small { color: var(--muted); font: 10px "Courier New", monospace; letter-spacing: .08em; }
+.comms-degraded { border-color: #a76746; box-shadow: inset 0 0 45px #a7674618; }
+.sensor-degraded { border-color: #bd914c; box-shadow: inset 0 0 32px #bd914c12; }
+.mission-grade { color: var(--muted); padding: 16px; border: 1px solid var(--line); border-radius: 10px; }
+.mission-grade b { color: var(--cyan); letter-spacing: .08em; }
+.storm-cleared { color: #79dba6 !important; border-color: #3f966a !important; background: #143525 !important; }
+.storm-lost { color: #ff927d !important; border-color: #a34d42 !important; }
+.crew-report { text-align: left; border-top: 1px solid var(--line); margin-top: 24px; padding-top: 16px; }
+.crew-report h2 { font-size: 14px; letter-spacing: .12em; text-transform: uppercase; }
+.crew-report p, .crew-report li { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.crew-report ol { padding-left: 20px; }
+@keyframes reactor-pulse { 50% { opacity: .68; } }
+@keyframes mission-settle { from { opacity: .7; transform: translateY(8px); filter: saturate(.55); } to { opacity: 1; transform: translateY(0); filter: saturate(1); } }
 .crew {
   display: flex;
   align-items: center;
@@ -835,6 +853,8 @@ aside {
   margin: 38px auto;
   padding: 50px;
 }
+.result.victory { border-color: #3f966a; background: radial-gradient(ellipse at top, #173727 0%, #0c1720 58%); animation: mission-settle .9s ease-out both; }
+.result.defeat { border-color: #a34d42; background: radial-gradient(ellipse at top, #351d1a 0%, #0c1720 58%); }
 .result-icon {
   color: var(--cyan);
   margin-bottom: 22px;
