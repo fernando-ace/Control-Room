@@ -180,4 +180,43 @@ describe("authenticated room API and commit races", () => {
     expect(pilot.station.symbols).toBeUndefined();
     expect(JSON.stringify(pilot)).not.toContain("secrets");
   });
+
+  it("persists coordinated emergency actions and returns the same ship state through each role snapshot", async () => {
+    const created = await create();
+    await request("p", { op: "join", code: created.code, name: "Pilot" });
+    await request("e", { op: "join", code: created.code, name: "Engineer" });
+    for (const uid of ["c", "p", "e"])
+      await request(uid, { op: "action", code: created.code, action: { type: "ready", value: true } });
+    await request("c", { op: "action", code: created.code, action: { type: "start" } });
+    const stored = store.rooms.get(created.code)!;
+    const mission = stored.mission!;
+    const openedAt = Date.now() - mission.variant.stageStarts[0] * 1000;
+    mission.startAt = openedAt;
+    mission.evaluatedAt = openedAt;
+    mission.deadlines = [...mission.variant.stageStarts, 150].map((seconds) => openedAt + seconds * 1000);
+    const [commander, pilot, engineer] = await Promise.all([
+      request("c", { op: "action", code: created.code, action: { type: "shield", value: mission.secrets.sectors[0] } }),
+      request("p", { op: "action", code: created.code, action: { type: "heading", value: mission.secrets.headings[0] } }),
+      request("e", { op: "action", code: created.code, action: { type: "power", value: "Shield" } }),
+    ]);
+    expect([commander.status, pilot.status, engineer.status]).toEqual([200, 200, 200]);
+    const synchronized = await Promise.all(["c", "p", "e"].map((uid) => request(uid, {
+      op: "action", code: created.code, action: { type: "sync", value: false },
+    })));
+    const snapshots = synchronized.map((response) => response.data as Snapshot);
+    expect(snapshots.every((snapshot) => snapshot.mission?.phase === 1)).toBe(true);
+    expect(snapshots.map((snapshot) => snapshot.mission?.variant)).toEqual([
+      mission.variant, mission.variant, mission.variant,
+    ]);
+    expect(snapshots.every((snapshot) => (snapshot.mission?.hull ?? 0) > 0)).toBe(true);
+    expect(snapshots[0].station.headings).toBeDefined();
+    expect(snapshots[1].station.headings).toBeUndefined();
+    expect(snapshots[1].station.heading).toBeDefined();
+    expect(snapshots[2].station.power).toBe("Shield");
+    const committed = store.rooms.get(created.code)!;
+    expect(committed.mission!.shield).toBe(mission.secrets.sectors[0]);
+    expect(committed.mission!.target).toBe(mission.secrets.headings[0]);
+    expect(committed.mission!.power).toBe("Shield");
+    expect(JSON.stringify(snapshots)).not.toContain("secrets");
+  });
 });

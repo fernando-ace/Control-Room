@@ -56,10 +56,10 @@ test.afterEach(async () => {
 type ApiResult = { status: number; body: Record<string, unknown> };
 // This suite requires real Supabase credentials and runs at real mission speed.
 // It deliberately has no test-clock override or production debug endpoint.
-test("three independent sessions complete two distinct Solar Storm sequences, reconnect, and retry", async ({
+test("three independent sessions survive varied emergencies, recover from defeat, reconnect, and retry", async ({
   browser,
 }) => {
-  test.setTimeout(540000);
+  test.setTimeout(660000);
   await mkdir(authStateDir, { recursive: true });
   const contexts = await Promise.all(
     authStatePaths.map((path) =>
@@ -203,9 +203,9 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
     await expect(page.getByText(/Everyone has different information and controls/)).toBeVisible();
     await expect(page.getByRole("heading", { name: "Your Job" })).toBeVisible();
   }
-  await expect(c.locator(".briefing")).toContainText("crew’s eyes");
-  await expect(p.locator(".briefing")).toContainText("course and launch control");
-  await expect(e.locator(".briefing")).toContainText("powered and cool");
+  await expect(c.locator(".briefing")).toContainText("threat intelligence");
+  await expect(p.locator(".briefing")).toContainText("outside threat");
+  await expect(e.locator(".briefing")).toContainText("subsystem health");
   await pages[3].keyboard.press("Tab");
   await expect(pages[3].getByRole("button", { name: "Create room" })).toBeFocused();
   await pages[3].keyboard.press("Tab");
@@ -440,7 +440,9 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
     const initial = last.get(c)!.mission!;
     const variant = initial.variant;
     const runStart = initial.startAt;
-    expect(variant.order).toHaveLength(3);
+    expect(variant.emergencyKinds).toHaveLength(3);
+    expect(new Set(variant.emergencyKinds).size).toBe(3);
+    expect(variant.emergencyKinds[0]).toBe("solar-flare");
     expect(variant.stageStarts[0]).toBeGreaterThanOrEqual(10);
     expect(variant.stageStarts[0]).toBeLessThanOrEqual(15);
     expect(crewPages.map((page) => last.get(page)!.mission!.variant)).toEqual([
@@ -452,43 +454,74 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
         timeout: 160000, intervals: [500],
       }).toBeGreaterThanOrEqual(runStart + seconds * 1000);
     };
+    const pilot = pageForRole("Pilot");
     for (let stage = 0; stage < 3; stage++) {
-      const event = variant.order[stage];
+      const event = variant.emergencyKinds[stage];
       const seconds = variant.stageStarts[stage];
       await at(seconds);
-      const stormNumber = variant.order.slice(0, stage).filter((previous) => previous !== "coolant").length + 1;
+      if (stage === 0) {
+        await pilot.reload();
+        await expect(pilot.getByRole("heading", { name: "Navigation", exact: true })).toBeVisible();
+        await expect.poll(() => last.get(pilot)?.mission?.phase).toBe(1);
+      }
       for (const page of crewPages) {
         await expect(page.locator(".mission-brief")).toContainText(
-          event === "coolant" ? "Coolant failure" : `${stormNumber === 1 ? "First" : "Second"} storm wave`,
+          ({
+            "solar-flare": "Solar flare impact",
+            "reactor-overheat": "Reactor overheat",
+            "communications-failure": "Communications failure",
+            "debris-field": "Debris field",
+            "sensor-disagreement": "Sensor disagreement",
+          } as const)[event],
         );
       }
-      if (event === "coolant") {
-        await expect.poll(() => crewPages.map((page) => last.get(page)?.station.brokenSymbol).find(Boolean)).toMatch(/^(○|△|□)$/);
-        const clue = crewPages.map((page) => last.get(page)!.station.brokenSymbol).find(Boolean)!;
-        const symbols = last.get(pageForRole("Engineer"))!.station.symbols!;
-        const circuit = Object.entries(symbols).find(([, symbol]) => symbol === clue)![0];
-        await pageForRole("Engineer").getByRole("button", { name: `${circuit} ${clue}`, exact: true }).click();
-        await expect.poll(() => last.get(pageForRole("Engineer"))?.station.isolated).toBe(circuit);
-        await pageForRole("Engineer").getByRole("button", { name: "Vent coolant", exact: true }).click();
-        try {
-          await expect.poll(() => last.get(pageForRole("Engineer"))?.station.vented).toBe(true);
-        } catch (error) {
-          throw new Error(`${error instanceof Error ? error.message : error}\nRecent room API failures: ${apiFailures.slice(-12).join(" | ") || "none"}`);
-        }
-        await pageForRole("Engineer").getByRole("button", { name: "Reset circuit", exact: true }).click();
-        await expect.poll(() => last.get(c)?.mission?.repairedAt).toBeTruthy();
+      const commander = pageForRole("Commander");
+      const engineer = pageForRole("Engineer");
+      if (event === "solar-flare") {
+        const intel = last.get(commander)!.station;
+        expect(intel.impactDirection).toMatch(/^(Port|Starboard)$/);
+        expect(intel.threatSeverity).toBeGreaterThan(0);
+        await commander.getByRole("button", { name: intel.impactDirection!, exact: true }).click();
+        await engineer.getByRole("button", { name: "Shield Defensive systems", exact: true }).click();
+        await pilot.getByLabel("TARGET HEADING").fill(String(intel.headings![0]));
+        await pilot.getByRole("button", { name: "Set heading" }).click();
+        await expect.poll(() => last.get(c)?.mission?.completedAt[0], { timeout: 25000 }).toBeTruthy();
+      } else if (event === "reactor-overheat") {
+        const priority = last.get(commander)!.station.procedure!;
+        await commander.getByRole("button", { name: priority, exact: true }).click();
+        await pilot.getByRole("button", { name: "Stabilize ship", exact: true }).click();
+        await engineer.getByRole("button", { name: priority === "Shields" ? "Shield Defensive systems" : "Balanced Even distribution", exact: true }).click();
+        const response = priority === "Shields" ? "Reinforce shields" : priority === "Life support" ? "Protect life support" : "Engage reactor cooling";
+        await engineer.getByRole("button", { name: response, exact: true }).click();
+        await expect.poll(() => last.get(engineer)?.mission?.systemPriorityApplied).toBe(priority);
+      } else if (event === "communications-failure") {
+        expect(last.get(commander)!.mission?.commsOnline).toBe(false);
+        expect(last.get(commander)!.station.headings).toBeUndefined();
+        await expect.poll(() => last.get(pilot)?.station.externalThreat).toBeDefined();
+        await commander.getByRole("button", { name: "Restore communications", exact: true }).click();
+        await pilot.getByRole("button", { name: "Steady relay antenna", exact: true }).click();
+        await engineer.getByRole("button", { name: "Balanced Even distribution", exact: true }).click();
+        await engineer.getByRole("button", { name: "Restore communications", exact: true }).click();
+        await expect.poll(() => last.get(c)?.mission?.commsOnline).toBe(true);
+        expect(last.get(c)!.mission!.shieldIntegrity).toBeLessThan(100);
+      } else if (event === "debris-field") {
+        const route = last.get(commander)!.station;
+        const safeHeading = Number(route.routeIntel!.match(/corridor (\d+)°/)![1]);
+        await commander.getByRole("button", { name: "Safe route", exact: true }).click();
+        await engineer.getByRole("button", { name: "Engines Escape propulsion", exact: true }).click();
+        await pilot.getByLabel("TARGET HEADING").fill(String(safeHeading));
+        await pilot.getByRole("button", { name: "Set heading" }).click();
       } else {
-        const wave = event === "storm-1" ? 0 : 1;
-        const commander = last.get(c)!.station;
-        await Promise.all([
-          c.getByRole("button", { name: commander.sectors![wave], exact: true }).click(),
-          pageForRole("Engineer").getByRole("button", { name: "Shield Defensive systems", exact: true }).click(),
-          pageForRole("Pilot").getByLabel("TARGET HEADING").fill(String(commander.headings![wave])).then(() =>
-            pageForRole("Pilot").getByRole("button", { name: "Set heading" }).click(),
-          ),
-        ]);
-        await expect.poll(() => last.get(c)?.mission?.completedAt[wave], { timeout: 25000 }).toBeTruthy();
+        const signal = last.get(engineer)!.station.sensorDiagnostic!.match(/sensor ([ABC])/i)![1].toUpperCase();
+        expect(last.get(commander)!.station.sensorForecast).toBeDefined();
+        expect(last.get(pilot)!.station.navigationTrace).toBeDefined();
+        await commander.getByRole("button", { name: `Trust signal ${signal}`, exact: true }).click();
+        await pilot.getByRole("button", { name: "Stabilize ship", exact: true }).click();
+        await engineer.getByRole("button", { name: `Signal ${signal}`, exact: true }).click();
       }
+      const nextStart = variant.stageStarts[stage + 1];
+      await at(nextStart);
+      await expect.poll(() => last.get(c)?.mission?.emergencyResults[stage]).toBe("recovered");
     }
     const escapeHeading = last.get(c)!.station.headings![2];
     const engineer = pageForRole("Engineer");
@@ -520,8 +553,9 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
     await expect.poll(() => last.get(pageForRole("Pilot"))?.station.heading).toBeCloseTo(last.get(c)!.station.headings![2], 0);
     await pageForRole("Pilot").getByRole("button", { name: /Initiate escape/ }).click();
     await Promise.all(crewPages.map((page) =>
-      expect(page.getByRole("heading", { name: "You brought them home." })).toBeVisible(),
+      expect(page.getByRole("heading", { name: "You brought them home together." })).toBeVisible(),
     ));
+    await c.screenshot({ path: `test-results/live-victory-${variant.name.toLowerCase().replaceAll(" ", "-")}.png`, fullPage: true });
     return { variant, startAt: runStart };
   };
   const firstRun = await completeCurrentMission();
@@ -536,21 +570,33 @@ test("three independent sessions complete two distinct Solar Storm sequences, re
   ]);
   const secondRun = last.get(c)!.mission!;
   expect(secondRun.variant.name).not.toBe(firstRun.variant.name);
-  expect(secondRun.variant.order).not.toEqual(firstRun.variant.order);
+  expect(secondRun.variant.emergencyKinds).not.toEqual(firstRun.variant.emergencyKinds);
+  expect(secondRun.variant.emergencyKinds.filter((kind) => kind !== "solar-flare" && !firstRun.variant.emergencyKinds.includes(kind))).toHaveLength(2);
   expect(secondRun.startAt).toBeGreaterThan(firstRun.startAt);
   expect(secondRun.phase).toBe(0);
   expect(secondRun.hull).toBe(100);
-  expect(secondRun.completedAt).toEqual([null, null]);
-  expect(secondRun.repairedAt).toBeNull();
+  expect(secondRun.emergencyResults).toEqual([null, null, null]);
+  expect(secondRun.commsOnline).toBe(true);
+  expect(secondRun.repairKits).toBe(2);
   expect(last.get(c)!.players.map((player) => player.role)).toEqual([
     "Commander", "Pilot", "Engineer",
   ]);
-  expect(last.get(pageForRole("Engineer"))!.station.isolated).toBeNull();
-  expect(last.get(pageForRole("Engineer"))!.station.vented).toBe(false);
+  expect(last.get(pageForRole("Engineer"))!.station.power).toBe("Balanced");
   expect(last.get(pageForRole("Pilot"))!.station.codeEntered).toBe("");
   await expect(pageForRole("Pilot").getByLabel("CODE FROM COMMANDER")).toHaveValue("");
   await expect(pageForRole("Pilot").getByLabel("TARGET HEADING")).toHaveValue("180");
   await completeCurrentMission();
+  await c.getByRole("button", { name: /Return to lobby/ }).click();
+  await Promise.all(crewPages.map((page) =>
+    expect(page.getByRole("heading", { name: "Flight crew" })).toBeVisible(),
+  ));
+  await ready();
+  await expect.poll(() => last.get(c)?.mission?.result, { timeout: 160000, intervals: [500] }).toBe("defeat");
+  await Promise.all(crewPages.map((page) =>
+    expect(page.getByRole("heading", { name: "The ship was lost to the storm." })).toBeVisible(),
+  ));
+  expect(last.get(c)!.mission?.reason).toBeTruthy();
+  await c.screenshot({ path: "test-results/live-defeat-crew-report.png", fullPage: true });
   await c.getByRole("button", { name: /Return to lobby/ }).click();
   await Promise.all(crewPages.map((page) =>
     expect(page.getByRole("heading", { name: "Flight crew" })).toBeVisible(),

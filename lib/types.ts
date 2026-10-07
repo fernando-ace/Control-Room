@@ -30,12 +30,32 @@ export type Mission = {
   endedAt: number | null;
   result: "victory" | "defeat" | null;
   reason: string | null;
+  commsOnline: boolean;
+  sensorsReliable: boolean;
+  propulsion: number;
+  shieldIntegrity: number;
+  lifeSupport: number;
+  repairKits: number;
+  repairsUsed: number;
+  emergencyResults: ("recovered" | "degraded" | "failed" | null)[];
+  currentEventIndex: number;
+  eventDecision: string | null;
+  eventCourse: string | null;
+  eventStabilized: boolean;
+  coolingApplied: boolean;
+  unreliableChosen: string | null;
+  systemPriorityApplied: string | null;
+  commsRestoredAt: number | null;
+  finaleReadyAt: number | null;
+  roleContributions: Record<Role, number>;
+  log: { at: number; text: string; role: Role | "Ship" }[];
   secrets: {
     headings: number[];
     sectors: ("Port" | "Starboard")[];
     symbols: Record<string, string>;
     broken: string;
     code: string;
+    answers: [string, string, string];
   };
 };
 export type MissionEvent = "storm-1" | "storm-2" | "coolant";
@@ -45,7 +65,15 @@ export type MissionVariant = {
   stageStarts: [number, number, number, number];
   coolantAt: number;
   intelRole: Role;
+  emergencyKinds: [EmergencyKind, EmergencyKind, EmergencyKind];
+  severity: [number, number, number];
 };
+export type EmergencyKind =
+  | "solar-flare"
+  | "reactor-overheat"
+  | "communications-failure"
+  | "debris-field"
+  | "sensor-disagreement";
 export type Room = {
   id: string;
   code: string;
@@ -57,6 +85,7 @@ export type Room = {
   mission: Mission | null;
   lastMissionSeed?: string;
   lastVariantName?: string;
+  lastEmergencyKinds?: EmergencyKind[];
   processed: string[];
 };
 export type Action = { type: string; value?: string | number | boolean };
@@ -66,13 +95,29 @@ export type Shared = {
   deadlines: number[];
   phase: number;
   hull: number;
-  heat?: number;
+  heat: number;
   completedAt: (number | null)[];
   repairedAt: number | null;
   endedAt: number | null;
   result: Mission["result"];
   reason: string | null;
   variant: MissionVariant;
+  commsOnline: boolean;
+  sensorsReliable: boolean;
+  propulsion: number;
+  shieldIntegrity: number;
+  lifeSupport: number;
+  repairKits: number;
+  repairsUsed: number;
+  emergencyResults: Mission["emergencyResults"];
+  eventDecision: string | null;
+  eventStabilized: boolean;
+  coolingApplied: boolean;
+  unreliableChosen: string | null;
+  systemPriorityApplied: string | null;
+  finaleReadyAt: number | null;
+  log: Mission["log"];
+  roleContributions: Mission["roleContributions"];
 };
 export type Station = {
   heading?: number;
@@ -90,6 +135,21 @@ export type Station = {
   brokenSymbol?: string;
   code?: string;
   shield?: string;
+  emergencyKind?: EmergencyKind;
+  impactDirection?: string;
+  threatSeverity?: number;
+  procedure?: string;
+  routeIntel?: string;
+  navigationTrace?: string;
+  reactorReading?: number;
+  sensorDiagnostic?: string;
+  commsRestoredAt?: number | null;
+  decision?: string | null;
+  course?: string | null;
+  propulsion?: number;
+  commsOnline?: boolean;
+  externalThreat?: string;
+  sensorForecast?: string;
 };
 export type Snapshot = {
   id: string;

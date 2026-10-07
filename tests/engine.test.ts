@@ -1,17 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { advance, apply, ensureMissionVariant, join, missionPatterns, newMission, snapshot } from "../lib/engine";
-import type { Room } from "../lib/types";
-const base = 1000000;
+import { advance, apply, ensureMissionVariant, join, missionPatterns, newMission, phaseAt, snapshot } from "../lib/engine";
+import type { Mission, Room } from "../lib/types";
+
+const base = 1_000_000;
+let actionNumber = 0;
+
 function seedForPattern(index: number) {
+  const name = missionPatterns[index].name;
   for (let n = 0; n < 1000; n++) {
     const seed = n.toString(16).padStart(32, "0");
-    if (missionPatterns.findIndex((p) => p.name === newMission(base, seed).variant.name) === index) return seed;
+    if (newMission(base, seed).variant.name === name) return seed;
   }
   throw new Error("No seed found for mission pattern");
 }
-const canonicalSeed = seedForPattern(0);
-function room(): Room {
-  const mission = newMission(base, canonicalSeed);
+function room(seed = seedForPattern(0)): Room {
+  const mission = newMission(base, seed);
   return {
     id: "room",
     code: "ABCDEF",
@@ -26,334 +29,380 @@ function room(): Room {
     mission,
     lastMissionSeed: mission.seed,
     lastVariantName: mission.variant.name,
+    lastEmergencyKinds: [...mission.variant.emergencyKinds],
     processed: [],
   };
 }
-function roomWithMission(mission: ReturnType<typeof newMission>): Room {
-  return { ...room(), mission, lastMissionSeed: mission.seed };
+function act(r: Room, id: string, type: string, value: string | number | boolean | undefined, seconds: number) {
+  apply(r, id, { type, value }, base + seconds * 1000, `test-action-${++actionNumber}`);
 }
-let seq = 0;
-function command(
-  r: Room,
-  id: string,
-  type: string,
-  value: string | number | boolean | undefined,
-  t: number,
-) {
-  apply(r, id, { type, value }, base + t * 1000, `action-${++seq}`);
-}
-function wave(r: Room, second = false) {
+
+function recoverFlare(r: Room) {
   const m = r.mission!;
-  const event = second ? "storm-2" : "storm-1";
-  const stage = m.variant.order.indexOf(event) + 1;
-  const t = m.variant.stageStarts[stage - 1];
-  const index = second ? 1 : 0;
-  command(r, "e", "power", "Shield", t);
-  command(r, "c", "shield", m.secrets.sectors[index], t);
-  command(r, "p", "heading", m.secrets.headings[index], t);
-  advance(m, base + (t + 12) * 1000);
+  const at = m.variant.stageStarts[0];
+  act(r, "c", "shield", m.secrets.sectors[0], at);
+  act(r, "p", "heading", m.secrets.headings[0], at);
+  act(r, "e", "power", "Shield", at);
+  advance(m, base + (at + 12) * 1000);
 }
-describe("Solar Storm timestamp simulation", () => {
-  it("generates the same authored sequence from an identical seed", () => {
-    const first = newMission(base, canonicalSeed);
-    expect(newMission(base, canonicalSeed)).toEqual(first);
-    expect(first.seed).toBe(canonicalSeed);
-  });
-  it("makes six deterministic sequences with bounded opening, stages, and escape", () => {
-    const variants = missionPatterns.map((_, index) => newMission(base, seedForPattern(index)));
-    expect(new Set(variants.map((mission) => mission.variant.name)).size).toBe(6);
-    expect(new Set(variants.map((mission) => mission.variant.order.join(","))).size).toBe(6);
-    for (const mission of variants) {
-      const [opening, second, third, escape] = mission.variant.stageStarts;
-      expect(opening).toBeGreaterThanOrEqual(10);
-      expect(opening).toBeLessThanOrEqual(15);
-      expect(second - opening).toBeGreaterThanOrEqual(30);
-      expect(third - second).toBeGreaterThanOrEqual(30);
-      expect(escape - third).toBeGreaterThanOrEqual(25);
-      expect(escape).toBeLessThanOrEqual(140);
-      expect(mission.deadlines.at(-1)).toBe(base + 150000);
-      expect(mission.variant.order.filter((event) => event.startsWith("storm"))).toHaveLength(2);
-      expect(mission.variant.order).toContain("coolant");
-      expect(mission.variant.coolantAt).toBe(mission.variant.stageStarts[mission.variant.order.indexOf("coolant")]);
-    }
-    for (const [index, mission] of variants.entries()) {
-      const r = roomWithMission(mission);
-      const stations = [snapshot(r, "c", base), snapshot(r, "p", base), snapshot(r, "e", base)];
-      expect(stations.find((station) => station.station.brokenSymbol)?.players.find((p) => p.id === stations.find((s) => s.station.brokenSymbol)?.me)?.role).toBe(missionPatterns[index].intelRole);
-      expect(stations.filter((station) => station.station.brokenSymbol)).toHaveLength(1);
-      expect(stations[0].station.code).toBeDefined();
-      expect(stations[1].station.heading).toBeDefined();
-      expect(stations[2].station.power).toBeDefined();
-    }
-  });
-  it("reconstructs legacy in-progress Solar Storm rooms without changing their timings", () => {
-    const r = room();
-    const mission = r.mission! as { variant?: unknown; seed?: string };
-    delete mission.variant;
-    delete mission.seed;
-    delete r.lastMissionSeed;
-    ensureMissionVariant(r);
-    const first = structuredClone(r.mission);
-    ensureMissionVariant(r);
-    expect(r.mission).toEqual(first);
-    expect(r.mission!.variant).toMatchObject({
-      name: "Solar Storm",
-      order: ["storm-1", "coolant", "storm-2"],
-      stageStarts: [12, 50, 90, 130],
-      coolantAt: 80,
-    });
-    expect(r.mission!.seed).toMatch(/^[a-f\d]{32}$/i);
-  });
-  it("allows a coordinated three-role solution for every generated sequence", () => {
-    for (let index = 0; index < missionPatterns.length; index++) {
-      const r = roomWithMission(newMission(base, seedForPattern(index)));
-      for (let stage = 1; stage <= 3; stage++) {
-        const event = r.mission!.variant.order[stage - 1];
-        const t = r.mission!.variant.stageStarts[stage - 1];
-        if (event === "coolant") {
-          const circuit = r.mission!.secrets.broken;
-          command(r, "e", "isolate", circuit, t);
-          command(r, "e", "vent", undefined, t);
-          command(r, "e", "reset", undefined, t);
-        } else {
-          const wave = event === "storm-1" ? 0 : 1;
-          command(r, "c", "shield", r.mission!.secrets.sectors[wave], t);
-          command(r, "e", "power", "Shield", t);
-          command(r, "p", "heading", r.mission!.secrets.headings[wave], t);
-          advance(r.mission!, base + (t + 12) * 1000);
-        }
-      }
-      const escape = r.mission!.variant.stageStarts[3];
-      command(r, "e", "power", "Engines", escape);
-      command(r, "p", "heading", r.mission!.secrets.headings[2], escape);
-      command(r, "p", "code", r.mission!.secrets.code, escape);
-      command(r, "c", "authorize", undefined, escape);
-      command(r, "p", "escape", undefined, escape + 3);
-      expect(r.mission!.result, r.mission!.variant.name).toBe("victory");
-    }
-  });
-  it("first emergency begins at 12 seconds and precise damage starts then", () => {
-    const r = room();
-    advance(r.mission!, base + 13000);
-    expect(r.mission!.hull).toBe(98);
-  });
-  it("delayed sync equals frequent sync across all boundaries", () => {
-    const a = room(),
-      b = room();
-    advance(a.mission!, base + 149000);
-    for (let t = 1; t <= 149; t++) advance(b.mission!, base + t * 1000);
-    expect(a.mission).toEqual(b.mission);
-    expect(a.mission!.result).toBe("defeat");
-  });
-  it("maneuver and hold complete without intermediate requests", () => {
-    const r = room();
-    wave(r);
-    expect(r.mission!.completedAt[0]).not.toBeNull();
-    expect(r.mission!.hull).toBeCloseTo(100 - 2 * (55 / 60), 5);
+function recoverSecondEmergency(r: Room) {
+  const m = r.mission!;
+  const at = m.variant.stageStarts[1];
+  const kind = m.variant.emergencyKinds[1];
+  if (kind === "reactor-overheat") {
+    const priority = m.secrets.answers[1];
+    act(r, "c", "decision", priority, at);
+    act(r, "p", "stabilize", true, at);
+    act(r, "e", "power", priority === "Shields" ? "Shield" : "Balanced", at);
+    act(r, "e", "systems", priority, at);
+  } else {
+    act(r, "c", "decision", "restore-comms", at);
+    act(r, "p", "stabilize", true, at);
+    act(r, "e", "power", "Balanced", at);
+    act(r, "e", "systems", "restore-comms", at);
+  }
+  advance(m, base + (at + 14) * 1000);
+}
+function recoverThirdEmergency(r: Room) {
+  const m = r.mission!;
+  const at = m.variant.stageStarts[2];
+  const kind = m.variant.emergencyKinds[2];
+  if (kind === "debris-field") {
+    act(r, "c", "decision", "safe", at);
+    act(r, "p", "heading", m.secrets.headings[2], at);
+    act(r, "e", "power", "Engines", at);
+  } else {
+    act(r, "c", "decision", m.secrets.answers[2], at);
+    act(r, "p", "stabilize", true, at);
+    act(r, "e", "systems", m.secrets.answers[2], at);
+  }
+  advance(m, base + (m.variant.stageStarts[3]) * 1000);
+}
+function surviveFinale(r: Room) {
+  const m = r.mission!;
+  const at = m.variant.stageStarts[3];
+  act(r, "e", "power", "Engines", at);
+  act(r, "p", "heading", m.secrets.headings[2], at);
+  act(r, "c", "authorize", true, at);
+  act(r, "p", "code", m.secrets.code, at);
+  advance(m, base + (at + 10) * 1000);
+  act(r, "p", "escape", true, at + 11);
+}
+function playSuccessfulMission(r: Room) {
+  recoverFlare(r);
+  recoverSecondEmergency(r);
+  recoverThirdEmergency(r);
+  surviveFinale(r);
+}
+
+describe("Emergency Interaction System", () => {
+  it("generates a deterministic, varied mission from its server seed", () => {
+    const seed = seedForPattern(2);
+    const first = newMission(base, seed);
+    expect(newMission(base, seed)).toEqual(first);
+    expect(first.seed).toBe(seed);
+    expect(new Set(first.variant.emergencyKinds).size).toBe(3);
+    expect(first.variant.emergencyKinds[0]).toBe("solar-flare");
+    expect(first.variant.stageStarts[0]).toBeGreaterThanOrEqual(10);
+    expect(first.variant.stageStarts[0]).toBeLessThanOrEqual(15);
+    expect(first.variant.stageStarts[3]).toBeGreaterThanOrEqual(125);
+    expect(first.deadlines.at(-1)).toBe(base + 150_000);
+    expect(first.variant.severity.every((severity) => severity >= 1 && severity <= 3)).toBe(true);
+    expect(first.secrets.headings).not.toEqual([240, 60, 180]);
   });
 
-  it("a maneuver through the alignment zone only protects inside that zone", () => {
-    const r = room();
-    r.mission!.heading = 230;
-    r.mission!.target = 250;
-    r.mission!.power = "Shield";
-    r.mission!.shield = "Port";
-    r.mission!.evaluatedAt = base + 12000;
-    advance(r.mission!, base + 13000);
-    expect(r.mission!.hull).toBeCloseTo(100 - 2 * (1 - 10 / 60), 5);
-    expect(r.mission!.completedAt[0]).toBeNull();
+  it("selects the full five-emergency set across deterministic mission variants", () => {
+    const variants = missionPatterns.map((_, index) => newMission(base, seedForPattern(index)));
+    expect(new Set(variants.map((mission) => mission.variant.name)).size).toBe(6);
+    expect(new Set(variants.flatMap((mission) => mission.variant.emergencyKinds))).toEqual(new Set([
+      "solar-flare", "reactor-overheat", "communications-failure", "debris-field", "sensor-disagreement",
+    ]));
+    for (const mission of variants) {
+      expect(new Set(mission.variant.emergencyKinds).size).toBe(3);
+      const [opening, second, third, finale] = mission.variant.stageStarts;
+      expect(second - opening).toBeGreaterThanOrEqual(30);
+      expect(third - second).toBeGreaterThanOrEqual(30);
+      expect(finale).toBeGreaterThanOrEqual(125);
+      expect(finale).toBeLessThanOrEqual(130);
+    }
   });
-  it("moving out of alignment immediately ends a hold and resumes damage", () => {
+
+  it("starts the first flare at the server deadline and resolves the three-role hold", () => {
     const r = room();
-    r.mission!.heading = 240;
-    r.mission!.target = 300;
-    r.mission!.power = "Shield";
-    r.mission!.shield = "Port";
-    r.mission!.evaluatedAt = base + 12000;
-    advance(r.mission!, base + 13000);
-    expect(r.mission!.hull).toBeCloseTo(100 - 2 * (1 - 5 / 60), 5);
-    expect(r.mission!.holdSince[0]).toBeNull();
+    const m = r.mission!;
+    advance(m, base + 11_000);
+    expect(m.hull).toBe(100);
+    recoverFlare(r);
+    expect(m.completedAt[0]).not.toBeNull();
+    advance(m, base + (m.variant.stageStarts[1] - 1) * 1000);
+    expect(m.emergencyResults[0]).toBeNull();
+    advance(m, base + m.variant.stageStarts[1] * 1000);
+    expect(m.emergencyResults[0]).toBe("recovered");
+    expect(m.roleContributions).toMatchObject({ Commander: 1, Pilot: 1, Engineer: 1 });
   });
-  it("wrap-around headings take the shortest path", () => {
+
+  it("makes a missed flare a recoverable degraded state with a shared consequence", () => {
     const r = room();
-    r.mission!.heading = 350;
-    r.mission!.target = 10;
-    advance(r.mission!, base + 500);
-    expect(r.mission!.heading).toBe(10);
+    const m = r.mission!;
+    const close = m.variant.stageStarts[1];
+    advance(m, base + close * 1000);
+    expect(m.emergencyResults[0]).toBe("degraded");
+    expect(m.hull).toBeLessThan(100);
+    expect(m.hull).toBeGreaterThan(20);
+    expect(m.shieldIntegrity).toBeLessThan(100);
+    expect(m.result).toBeNull();
+    expect(snapshot(r, "e", base + close * 1000).mission?.emergencyResults[0]).toBe("degraded");
   });
-  it("changing power interrupts a hold immediately", () => {
-    const r = room();
-    const t = r.mission!.variant.stageStarts[0];
-    command(r, "c", "shield", r.mission!.secrets.sectors[0], t);
-    command(r, "p", "heading", r.mission!.secrets.headings[0], t);
-    command(r, "e", "power", "Shield", t);
-    advance(r.mission!, base + (t + 2) * 1000);
-    command(r, "e", "power", "Balanced", t + 2);
-    expect(r.mission!.holdSince[0]).toBeNull();
-  });
-  it("wrong resets cost ten hull and enforce cooldown", () => {
-    const r = room();
-    wave(r);
-    const t = r.mission!.variant.stageStarts[r.mission!.variant.order.indexOf("coolant")];
-    const wrong = ["A", "B", "C"].find((circuit) => circuit !== r.mission!.secrets.broken)!;
-    command(r, "e", "isolate", wrong, t);
-    command(r, "e", "vent", undefined, t);
-    const h = r.mission!.hull;
-    command(r, "e", "reset", undefined, t);
-    expect(r.mission!.hull).toBe(h - 10);
-    command(r, "e", "vent", undefined, t + 1);
-    expect(() => command(r, "e", "reset", undefined, t + 1)).toThrow(
-      "cooling down",
-    );
-  });
-  it("repair prevents coolant damage including delayed requests", () => {
-    const r = room();
-    wave(r);
-    const t = r.mission!.variant.stageStarts[r.mission!.variant.order.indexOf("coolant")];
-    command(r, "e", "isolate", r.mission!.secrets.broken, t);
-    command(r, "e", "vent", undefined, t);
-    command(r, "e", "reset", undefined, t);
-    const h = r.mission!.hull;
-    advance(r.mission!, base + (t + 8) * 1000);
-    expect(r.mission!.hull).toBe(h);
-  });
-  it("coolant damage starts with its scheduled event and does not retroactively stop", () => {
-    const r = room();
-    wave(r);
-    const t = r.mission!.variant.stageStarts[r.mission!.variant.order.indexOf("coolant")];
-    advance(r.mission!, base + (t + 5) * 1000);
-    expect(r.mission!.hull).toBeCloseTo(100 - 2 * (55 / 60) - 5);
-  });
-  it("keeps an unrepaired coolant leak damaging the ship during escape", () => {
-    const r = room();
-    r.mission!.completedAt = [base + 20000, base + 100000];
-    r.mission!.evaluatedAt = base + 120000;
-    advance(r.mission!, base + 135000);
-    expect(r.mission!.hull).toBe(85);
-  });
-  it("full coordinated mission succeeds", () => {
-    const r = room();
-    wave(r);
-    const coolant = r.mission!.variant.stageStarts[r.mission!.variant.order.indexOf("coolant")];
-    command(r, "e", "isolate", r.mission!.secrets.broken, coolant);
-    command(r, "e", "vent", undefined, coolant);
-    command(r, "e", "reset", undefined, coolant);
-    wave(r, true);
-    const escape = r.mission!.variant.stageStarts[3];
-    command(r, "e", "power", "Engines", escape);
-    command(r, "p", "heading", r.mission!.secrets.headings[2], escape);
-    command(r, "p", "code", r.mission!.secrets.code, escape);
-    command(r, "c", "authorize", undefined, escape);
-    command(r, "p", "escape", undefined, escape + 3);
+
+  it.each([0, 1, 2, 3, 4, 5])("allows a coordinated crew to survive generated pattern %i", (index) => {
+    const r = room(seedForPattern(index));
+    playSuccessfulMission(r);
     expect(r.mission!.result).toBe("victory");
-    expect(r.mission!.hull).toBeGreaterThan(90);
+    expect(r.mission!.emergencyResults).toEqual(["recovered", "recovered", "recovered"]);
+    expect(r.mission!.hull).toBeGreaterThan(70);
+    expect(r.mission!.roleContributions.Commander).toBeGreaterThan(0);
+    expect(r.mission!.roleContributions.Pilot).toBeGreaterThan(0);
+    expect(r.mission!.roleContributions.Engineer).toBeGreaterThan(0);
+    expect(r.mission!.log.some((entry) => entry.text.includes("stabilized by the crew"))).toBe(true);
+    expect(r.mission!.reason).toContain("together");
   });
-  it("missed departure fails exactly at the deadline", () => {
+
+  it("requires Commander, Pilot, and Engineer to combine different reactor actions", () => {
+    const r = room(seedForPattern(0));
+    recoverFlare(r);
+    const at = r.mission!.variant.stageStarts[1];
+    const priority = r.mission!.secrets.answers[1];
+    act(r, "c", "decision", priority, at);
+    act(r, "e", "power", "Balanced", at);
+    if (priority === "Shields") {
+      act(r, "e", "power", "Shield", at);
+      act(r, "e", "systems", priority, at);
+      expect(r.mission!.shieldIntegrity).toBe(100);
+    } else {
+      act(r, "e", "systems", priority, at);
+    }
+    expect(r.mission!.systemPriorityApplied).toBe(priority);
+    expect(r.mission!.emergencyResults[1]).toBeNull();
+    act(r, "p", "stabilize", true, at);
+    advance(r.mission!, base + r.mission!.variant.stageStarts[2] * 1000);
+    expect(r.mission!.emergencyResults[1]).toBe("recovered");
+  });
+
+  it("requires the called power route and aggressive movement raises reactor heat", () => {
+    const r = room(seedForPattern(0));
+    recoverFlare(r);
+    const at = r.mission!.variant.stageStarts[1];
+    const priority = r.mission!.secrets.answers[1];
+    act(r, "c", "decision", priority, at);
+    act(r, "p", "heading", 0, at);
+    expect(() => act(r, "e", "systems", priority, at)).toThrow("power");
+    advance(r.mission!, base + (at + 3) * 1000);
+    expect(r.mission!.heat).toBeGreaterThan(20);
+    act(r, "p", "stabilize", true, at + 3);
+    act(r, "e", "power", priority === "Shields" ? "Shield" : "Balanced", at + 3);
+    act(r, "e", "systems", priority, at + 3);
+    expect(r.mission!.systemPriorityApplied).toBe(priority);
+  });
+
+  it("hides Command navigation data during comms loss and makes the Pilot the outside feed", () => {
+    const r = room(seedForPattern(1));
+    recoverFlare(r);
+    const at = r.mission!.variant.stageStarts[1];
+    act(r, "c", "decision", "restore-comms", at);
+    const c = snapshot(r, "c", base + at * 1000);
+    const p = snapshot(r, "p", base + at * 1000);
+    expect(c.mission?.commsOnline).toBe(false);
+    expect(c.station.headings).toBeUndefined();
+    expect(c.station.code).toBeUndefined();
+    expect(p.station.externalThreat).toBeDefined();
+    act(r, "p", "stabilize", true, at);
+    act(r, "e", "power", "Balanced", at);
+    act(r, "e", "systems", "restore-comms", at);
+    expect(snapshot(r, "c", base + at * 1000).mission?.commsOnline).toBe(true);
+    expect(r.mission!.shieldIntegrity).toBe(90);
+  });
+
+  it("makes the debris route a safe-versus-fast tradeoff", () => {
+    const r = room(seedForPattern(0));
+    recoverFlare(r);
+    recoverSecondEmergency(r);
+    const m = r.mission!;
+    const hull = m.hull;
+    const at = m.variant.stageStarts[2];
+    act(r, "c", "decision", "fast", at);
+    act(r, "p", "heading", m.secrets.headings[2], at);
+    act(r, "e", "power", "Engines", at);
+    advance(m, base + m.variant.stageStarts[3] * 1000);
+    expect(m.emergencyResults[2]).toBe("degraded");
+    expect(m.hull).toBeLessThan(hull);
+    expect(m.propulsion).toBeLessThan(100);
+    expect(m.result).toBeNull();
+  });
+
+  it("gives three distinct clues for sensor disagreement without exposing the answer", () => {
+    const r = room(seedForPattern(1));
+    recoverFlare(r);
+    recoverSecondEmergency(r);
+    const at = r.mission!.variant.stageStarts[2];
+    const c = snapshot(r, "c", base + at * 1000);
+    const p = snapshot(r, "p", base + at * 1000);
+    const e = snapshot(r, "e", base + at * 1000);
+    expect(p.station.navigationTrace).toBeDefined();
+    expect(e.station.sensorDiagnostic).toBeDefined();
+    expect(c.station.sensorDiagnostic).toBeUndefined();
+    expect(JSON.stringify([c, p, e])).not.toContain('"answers"');
+    act(r, "c", "decision", r.mission!.secrets.answers[2], at);
+    act(r, "p", "stabilize", true, at);
+    act(r, "e", "systems", r.mission!.secrets.answers[2], at);
+    advance(r.mission!, base + r.mission!.variant.stageStarts[3] * 1000);
+    expect(r.mission!.emergencyResults[2]).toBe("recovered");
+    expect(r.mission!.sensorsReliable).toBe(true);
+  });
+
+  it("lets the Engineer spend a limited finale kit to recover damaged systems", () => {
     const r = room();
-    r.mission!.completedAt = [base + 20000, base + 105000];
-    r.mission!.repairedAt = base + 51000;
-    advance(r.mission!, base + 170000);
+    recoverFlare(r);
+    const m = r.mission!;
+    m.emergencyResults = ["degraded", "degraded", "degraded"];
+    m.commsOnline = false;
+    m.sensorsReliable = false;
+    m.propulsion = 30;
+    const at = m.variant.stageStarts[3];
+    act(r, "e", "power", "Balanced", at);
+    act(r, "e", "systems", "repair-comms", at);
+    act(r, "e", "systems", "repair-propulsion", at);
+    expect(m.commsOnline).toBe(true);
+    expect(m.propulsion).toBe(60);
+    expect(m.repairKits).toBe(0);
+    expect(m.repairsUsed).toBe(2);
+    expect(() => act(r, "e", "systems", "repair-sensors", at)).toThrow("No repair kits");
+  });
+
+  it("does not let an unresolved or badly damaged ship leave in the finale", () => {
+    const r = room();
+    const m = r.mission!;
+    const at = m.variant.stageStarts[3];
+    m.emergencyResults = ["recovered", "recovered", "degraded"];
+    m.hull = 12;
+    m.evaluatedAt = base + at * 1000;
+    act(r, "e", "power", "Engines", at);
+    act(r, "p", "heading", m.secrets.headings[2], at);
+    act(r, "c", "authorize", true, at);
+    act(r, "p", "code", m.secrets.code, at);
+    expect(() => act(r, "p", "escape", true, at + 1)).toThrow("hull and propulsion reserve");
+  });
+
+  it("defeat records the cause and ends at the authoritative 150-second mark", () => {
+    const r = room();
+    r.mission!.emergencyResults = ["recovered", "recovered", "recovered"];
+    r.mission!.completedAt = [base + 20_000, base + 110_000];
+    r.mission!.evaluatedAt = base + 149_000;
+    advance(r.mission!, base + 170_000);
     expect(r.mission!.result).toBe("defeat");
-    expect(r.mission!.endedAt).toBe(base + 150000);
+    expect(r.mission!.endedAt).toBe(base + 150_000);
+    expect(r.mission!.reason).toBeTruthy();
+    expect(r.mission!.emergencyResults[0]).toBe("recovered");
   });
-  it("no controls can resurrect a failed mission", () => {
-    const r = room();
-    advance(r.mission!, base + 160000);
-    expect(() => command(r, "e", "power", "Shield", 161)).toThrow("not active");
+
+  it("keeps coarse and frequent authoritative synchronization equivalent", () => {
+    const a = room();
+    const b = room();
+    advance(a.mission!, base + 45_000);
+    for (let t = 1; t <= 45; t++) advance(b.mission!, base + t * 1000);
+    expect(a.mission).toEqual(b.mission);
   });
-  it("private information is filtered by station", () => {
+
+  it("keeps the three role information boundaries and shared configuration consistent", () => {
     const r = room();
-    const c = snapshot(r, "c", base),
-      p = snapshot(r, "p", base),
-      e = snapshot(r, "e", base);
+    const c = snapshot(r, "c", base);
+    const p = snapshot(r, "p", base);
+    const e = snapshot(r, "e", base);
+    expect(c.mission?.variant).toEqual(p.mission?.variant);
+    expect(p.mission?.variant).toEqual(e.mission?.variant);
     expect(c.station.code).toBeDefined();
     expect(p.station.code).toBeUndefined();
     expect(e.station.code).toBeUndefined();
     expect(c.station.symbols).toBeUndefined();
     expect(p.station.symbols).toBeUndefined();
     expect(e.station.symbols).toBeDefined();
-    expect(c.station.brokenSymbol).toBeDefined();
-    expect(e.station.brokenSymbol).toBeUndefined();
-    expect(c.mission?.variant).toEqual(e.mission?.variant);
-    expect(JSON.stringify(c)).not.toContain(r.mission!.seed);
-    expect(JSON.stringify(p.mission)).not.toContain("secrets");
+    expect(JSON.stringify([c, p, e])).not.toContain("secrets");
+    expect(JSON.stringify([c, p, e])).not.toContain(r.mission!.seed);
+    expect(JSON.stringify([c, p, e])).not.toContain(r.mission!.secrets.answers.join(""));
   });
-  it("role spoofing is rejected", () => {
-    expect(() => command(room(), "p", "shield", "Port", 12)).toThrow(
-      "another station",
-    );
+
+  it("filters reactor, route, and sensor readings by role", () => {
+    const r = room(seedForPattern(0));
+    recoverFlare(r);
+    const reactorAt = r.mission!.variant.stageStarts[1];
+    expect(snapshot(r, "e", base + reactorAt * 1000).station.reactorReading).toBeDefined();
+    expect(snapshot(r, "c", base + reactorAt * 1000).station.reactorReading).toBeUndefined();
+    recoverSecondEmergency(r);
+    const debrisAt = r.mission!.variant.stageStarts[2];
+    expect(snapshot(r, "c", base + debrisAt * 1000).station.routeIntel).toBeDefined();
+    expect(snapshot(r, "p", base + debrisAt * 1000).station.routeIntel).toBeUndefined();
   });
-  it("deduplicates commands", () => {
+
+  it("reconstructs a legacy active mission without changing its timing or hull", () => {
     const r = room();
-    wave(r);
-    const coolant = r.mission!.variant.stageStarts[r.mission!.variant.order.indexOf("coolant")];
-    command(r, "e", "isolate", r.mission!.secrets.broken, coolant);
-    command(r, "e", "vent", undefined, coolant);
-    apply(r, "e", { type: "reset" }, base + coolant * 1000, "same-id");
-    const h = r.mission!.hull;
-    apply(r, "e", { type: "reset" }, base + coolant * 1000, "same-id");
-    expect(r.mission!.hull).toBe(h);
+    const m = r.mission!;
+    delete (m as Partial<Mission>).variant;
+    delete (m as Partial<Mission>).emergencyResults;
+    delete (m as Partial<Mission>).repairKits;
+    m.hull = 73;
+    m.evaluatedAt = base + 55_000;
+    ensureMissionVariant(r);
+    const result = structuredClone(r.mission);
+    ensureMissionVariant(r);
+    expect(r.mission).toEqual(result);
+    expect(r.mission!.variant.stageStarts).toEqual([12, 50, 90, 130]);
+    expect(r.mission!.hull).toBe(73);
+    expect(r.mission!.evaluatedAt).toBe(base + 55_000);
+    expect(r.mission!.repairKits).toBe(2);
   });
-  it("reconnect keeps identity and role without an extra seat", () => {
+
+  it("deduplicates repeated actions and rejects role spoofing", () => {
+    const r = room();
+    const now = base + 1_000;
+    apply(r, "e", { type: "power", value: "Shield" }, now, "same-action-id");
+    const contribution = r.mission!.roleContributions.Engineer;
+    apply(r, "e", { type: "power", value: "Shield" }, now, "same-action-id");
+    expect(r.mission!.roleContributions.Engineer).toBe(contribution);
+    expect(() => act(r, "p", "shield", "Port", 2)).toThrow("another station");
+    expect(() => act(r, "e", "power", "Warp", 2)).toThrow("Invalid power");
+  });
+
+  it("keeps role identity on reconnect and room capacity at exactly three", () => {
     const r = room();
     join(r, "p", "Changed", base + 10);
     expect(r.players).toHaveLength(3);
     expect(r.players[1].role).toBe("Pilot");
-    expect(snapshot(r, "p", base + 10).mission?.variant).toEqual(snapshot(r, "c", base + 10).mission?.variant);
-  });
-  it("fourth player cannot join", () => {
-    const r = room();
     r.mission = null;
     expect(() => join(r, "x", "Fourth", base)).toThrow("full");
   });
-  it("host swaps roles and resets readiness", () => {
-    const r = room();
-    r.mission = null;
-    command(r, "c", "swap", "p", 0);
-    expect(r.players[0].role).toBe("Pilot");
-    expect(r.players[1].role).toBe("Commander");
-    expect(r.players.every((p) => !p.ready)).toBe(true);
-  });
-  it("host remains host after swapping and can retry", () => {
-    const r = room();
-    const previousVariant = r.mission!.variant.name;
-    r.mission!.completedAt = [base + 20000, base + 110000];
-    r.mission!.repairedAt = base + 60000;
-    r.mission!.isolated = "C";
-    r.mission!.vented = true;
-    r.mission!.codeEntered = "1234";
-    advance(r.mission!, base + 160000);
-    command(r, "c", "retry", undefined, 161);
-    expect(r.mission).toBeNull();
-    expect(r.players.every((p) => !p.ready)).toBe(true);
-    const previousSeed = r.lastMissionSeed;
-    r.players.forEach((p) => { p.ready = true; p.seenAt = base + 162000; });
-    command(r, "c", "start", undefined, 162);
+
+  it("selects at least one new emergency type after a retry in the same room", () => {
+    const r = room(seedForPattern(0));
+    const previousKinds = [...r.mission!.variant.emergencyKinds];
+    const previousSeed = r.mission!.seed;
+    r.mission!.result = "defeat";
+    r.mission!.endedAt = base + 10_000;
+    act(r, "c", "retry", undefined, 11);
+    r.players.forEach((player) => { player.ready = true; player.seenAt = base + 12_000; });
+    act(r, "c", "start", undefined, 12);
     expect(r.mission!.seed).not.toBe(previousSeed);
-    expect(r.mission!.variant.name).not.toBe(previousVariant);
-    expect(r.mission!.variant).toEqual(newMission(base + 162000, r.mission!.seed).variant);
-    expect(r.mission!.completedAt).toEqual([null, null]);
-    expect(r.mission!.repairedAt).toBeNull();
-    expect(r.mission!.isolated).toBeNull();
-    expect(r.mission!.vented).toBe(false);
-    expect(r.mission!.codeEntered).toBe("");
-    expect(r.players.map((p) => p.role)).toEqual(["Commander", "Pilot", "Engineer"]);
+    expect(r.mission!.variant.emergencyKinds.filter((kind) => kind !== "solar-flare" && !previousKinds.includes(kind))).toHaveLength(2);
+    expect(r.mission!.emergencyResults).toEqual([null, null, null]);
+    expect(r.mission!.repairKits).toBe(2);
+    expect(r.mission!.roleContributions).toEqual({ Commander: 0, Pilot: 0, Engineer: 0 });
   });
-  it("start requires all three players connected and ready", () => {
-    const r = room();
-    r.mission = null;
-    r.players[1].ready = false;
-    expect(() => command(r, "c", "start", undefined, 0)).toThrow("ready");
-  });
-  it("cannot escape while objectives remain incomplete", () => {
-    const r = room();
-    r.mission!.hull = 1000;
-    advance(r.mission!, base + 130000);
-    expect(() => command(r, "p", "escape", undefined, 131)).toThrow("requires");
-  });
-  it("action values are validated", () => {
-    const r = room();
-    expect(() => command(r, "p", "heading", NaN, 0)).toThrow("Invalid");
-    expect(() => command(r, "e", "power", "Bogus", 0)).toThrow("Invalid");
+
+  it("validates every generated stage boundary", () => {
+    const m = newMission(base, seedForPattern(3));
+    expect(phaseAt(m, base + (m.variant.stageStarts[0] - 1) * 1000)).toBe(0);
+    expect(phaseAt(m, base + m.variant.stageStarts[0] * 1000)).toBe(1);
+    expect(phaseAt(m, base + m.variant.stageStarts[1] * 1000)).toBe(2);
+    expect(phaseAt(m, base + m.variant.stageStarts[2] * 1000)).toBe(3);
+    expect(phaseAt(m, base + m.variant.stageStarts[3] * 1000)).toBe(4);
+    expect(phaseAt(m, base + 150_000)).toBe(4);
   });
 });
