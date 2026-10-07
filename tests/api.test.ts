@@ -80,9 +80,13 @@ describe("authenticated room API and commit races", () => {
     expect(joined.every((x) => x.status === 200)).toBe(true);
     expect(store.rooms.get(r.code)!.players).toHaveLength(3);
     expect(store.conflicts).toBeGreaterThan(0);
-    expect(
-      (await request("x", { op: "join", code: r.code, name: "Fourth" })).status,
-    ).toBe(400);
+    const fullRoom = await request("x", {
+      op: "join",
+      code: r.code,
+      name: "Fourth",
+    });
+    expect(fullRoom.status).toBe(400);
+    expect(fullRoom.data.error).toBe("Room is full");
     expect(
       (
         await request("x", {
@@ -92,6 +96,15 @@ describe("authenticated room API and commit races", () => {
         })
       ).status,
     ).toBe(410);
+  });
+  it("returns a clear message for a nonexistent room", async () => {
+    const missing = await request("x", {
+      op: "join",
+      code: "ABC234",
+      name: "Guest",
+    });
+    expect(missing.status).toBe(400);
+    expect(missing.data.error).toBe("Room not found");
   });
   it("preserves simultaneous ready and flight actions", async () => {
     const r = await create();

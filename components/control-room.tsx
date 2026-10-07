@@ -17,7 +17,9 @@ import {
   UserMinus,
 } from "lucide-react";
 import { browserClient, ensureAnonymousSession } from "@/lib/browser";
+import { parseRoomInviteUrl } from "@/lib/invites";
 import { Action, Role, Snapshot } from "@/lib/types";
+import InviteActions from "./invite-actions";
 const briefings: Record<Role, string> = {
   Commander:
     "You are the crew’s eyes. Read each safe heading, shield side, and escape code aloud as it becomes relevant. The coolant clue may be held by your station or a crew member. Set shields and authorize departure.",
@@ -70,6 +72,7 @@ export default function ControlRoom() {
   const [room, setRoom] = useState<Snapshot | null>(null),
     [name, setName] = useState(""),
     [code, setCode] = useState(""),
+    [invitePrefilled, setInvitePrefilled] = useState(false),
     [error, setError] = useState(""),
     [roomCodeCopied, setRoomCodeCopied] = useState(false),
     [busy, setBusy] = useState(false),
@@ -152,6 +155,18 @@ export default function ControlRoom() {
   );
   useEffect(() => {
     let alive = true;
+    const invite = parseRoomInviteUrl(window.location.href);
+    window.setTimeout(() => {
+      if (!alive) return;
+      if (invite.status === "valid") {
+        setCode(invite.code);
+        setInvitePrefilled(true);
+      } else if (invite.status === "invalid") {
+        setError(
+          "This invite link is invalid. Ask your host for a fresh link or enter the six-character room code.",
+        );
+      }
+    }, 0);
     (async () => {
       try {
         const db = browserClient();
@@ -159,7 +174,7 @@ export default function ControlRoom() {
         if (!alive) return;
         setIdentity(true);
         const saved = localStorage.getItem("cr-room");
-        if (saved) {
+        if (saved && invite.status === "none") {
           try {
             await call("action", saved, { type: "sync" });
           } catch {
@@ -167,7 +182,7 @@ export default function ControlRoom() {
           }
         }
       } catch (e) {
-        if (alive)
+        if (alive && invite.status !== "invalid")
           setError(
             e instanceof Error
               ? friendlyError(e.message)
@@ -517,6 +532,11 @@ export default function ControlRoom() {
                 setCode(e.target.value.toUpperCase().replace(/[^A-Z2-9]/g, ""))
               }
             />
+            {invitePrefilled && (
+              <small className="invite-prefill" role="status">
+                Invite link ready. Enter your name, then choose Join room.
+              </small>
+            )}
             <button
               type="submit"
               disabled={!identity || busy || !name.trim() || code.length !== 6}
@@ -555,12 +575,13 @@ export default function ControlRoom() {
               <div className="panel">
                 <div className="panel-heading">
                   <h2>Flight crew</h2>
-                  <span>{room.code}</span>
+                  <span className="lobby-code">ROOM CODE · {room.code}</span>
                 </div>
                 <p>
-                  Share the room code. All three stations must be ready before
-                  launch.
+                  Invite two players to join. All three stations must be ready
+                  before launch.
                 </p>
+                <InviteActions code={room.code} />
                 <div className="lobby-players">
                   {(["Commander", "Pilot", "Engineer"] as Role[]).map((r) => {
                     const p = room.players.find((p) => p.role === r);

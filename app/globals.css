@@ -616,6 +616,37 @@ aside {
   gap: 12px;
   margin: 24px 0;
 }
+.lobby-code {
+  display: block;
+  color: var(--cyan);
+  font-family: "Courier New", monospace;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  white-space: nowrap;
+}
+.invite-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 18px 0 8px;
+}
+.invite-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 48px;
+}
+.invite-feedback {
+  color: var(--cyan);
+  font-size: 13px;
+}
+.invite-prefill {
+  color: var(--cyan);
+  letter-spacing: 0;
+}
 .seat {
   display: flex;
   align-items: center;
@@ -657,6 +688,10 @@ aside {
 .host-badge { color: var(--amber); border-color: #806c43; }
 .seat > div {
   flex: 1;
+  min-width: 0;
+}
+.seat h3 {
+  overflow-wrap: anywhere;
 }
 .station-icon {
   color: var(--cyan);
@@ -834,6 +869,9 @@ aside {
   .panel-heading > span {
     display: none;
   }
+  .panel-heading > .lobby-code {
+    display: block;
+  }
   .crew small {
     display: none;
   }
@@ -886,6 +924,10 @@ aside {
   .room-code b {
     font-size: 17px;
   }
+  .lobby-code {
+    font-size: 18px;
+    letter-spacing: 0.12em;
+  }
   .sound {
     padding: 10px;
   }
@@ -929,6 +971,14 @@ aside {
   .lobby > .panel > button {
     width: 100%;
     margin-right: 0;
+  }
+  .invite-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .invite-actions button {
+    width: 100%;
+    margin: 0;
   }
   .entry-facts {
     margin: 20px 0;
